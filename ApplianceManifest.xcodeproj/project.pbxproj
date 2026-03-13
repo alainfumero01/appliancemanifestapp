@@ -1,0 +1,445 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A00000010000000000000001 /* ApplianceManifestApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000010000000000000101 /* ApplianceManifestApp.swift */; };
+		A00000010000000000000002 /* AppModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000010000000000000102 /* AppModels.swift */; };
+		A00000010000000000000003 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000010000000000000103 /* AppEnvironment.swift */; };
+		A00000010000000000000004 /* SupabaseBackendService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000010000000000000104 /* SupabaseBackendService.swift */; };
+		A00000010000000000000005 /* Infrastructure.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000010000000000000105 /* Infrastructure.swift */; };
+		A00000010000000000000006 /* SpreadsheetExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000010000000000000106 /* SpreadsheetExportService.swift */; };
+		A00000010000000000000007 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000010000000000000107 /* AppViewModel.swift */; };
+		A00000010000000000000008 /* NewManifestViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000010000000000000108 /* NewManifestViewModel.swift */; };
+		A00000010000000000000009 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000010000000000000109 /* RootView.swift */; };
+		A0000001000000000000000A /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000001000000000000010A /* AuthView.swift */; };
+		A0000001000000000000000B /* ManifestListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000001000000000000010B /* ManifestListView.swift */; };
+		A0000001000000000000000C /* ManifestDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000001000000000000010C /* ManifestDetailView.swift */; };
+		A0000001000000000000000D /* NewManifestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000001000000000000010D /* NewManifestView.swift */; };
+		A0000001000000000000000E /* ApplianceManifestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000001000000000000010F /* ApplianceManifestTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A00000010000000000000020 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000010000000000000030 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A00000010000000000000040;
+			remoteInfo = ApplianceManifest;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A00000010000000000000101 /* ApplianceManifestApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplianceManifestApp.swift; sourceTree = "<group>"; };
+		A00000010000000000000102 /* AppModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModels.swift; sourceTree = "<group>"; };
+		A00000010000000000000103 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		A00000010000000000000104 /* SupabaseBackendService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseBackendService.swift; sourceTree = "<group>"; };
+		A00000010000000000000105 /* Infrastructure.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure.swift; sourceTree = "<group>"; };
+		A00000010000000000000106 /* SpreadsheetExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpreadsheetExportService.swift; sourceTree = "<group>"; };
+		A00000010000000000000107 /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
+		A00000010000000000000108 /* NewManifestViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewManifestViewModel.swift; sourceTree = "<group>"; };
+		A00000010000000000000109 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		A0000001000000000000010A /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
+		A0000001000000000000010B /* ManifestListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestListView.swift; sourceTree = "<group>"; };
+		A0000001000000000000010C /* ManifestDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestDetailView.swift; sourceTree = "<group>"; };
+		A0000001000000000000010D /* NewManifestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewManifestView.swift; sourceTree = "<group>"; };
+		A0000001000000000000010E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A0000001000000000000010F /* ApplianceManifestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplianceManifestTests.swift; sourceTree = "<group>"; };
+		A00000010000000000000110 /* ApplianceManifest.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = ApplianceManifest.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000010000000000000111 /* ApplianceManifestTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = ApplianceManifestTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A00000010000000000000050 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00000010000000000000051 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A00000010000000000000060 = {
+			isa = PBXGroup;
+			children = (
+				A00000010000000000000061 /* ApplianceManifest */,
+				A00000010000000000000062 /* ApplianceManifestTests */,
+				A00000010000000000000063 /* Products */,
+				A00000010000000000000064 /* supabase */,
+			);
+			sourceTree = "<group>";
+		};
+		A00000010000000000000061 /* ApplianceManifest */ = {
+			isa = PBXGroup;
+			path = ApplianceManifest;
+			sourceTree = "<group>";
+			children = (
+				A00000010000000000000101 /* ApplianceManifestApp.swift */,
+				A00000010000000000000071 /* Models */,
+				A00000010000000000000072 /* Services */,
+				A00000010000000000000073 /* ViewModels */,
+				A00000010000000000000074 /* Views */,
+				A0000001000000000000010E /* Info.plist */,
+			);
+		};
+		A00000010000000000000062 /* ApplianceManifestTests */ = {
+			isa = PBXGroup;
+			path = ApplianceManifestTests;
+			sourceTree = "<group>";
+			children = (
+				A0000001000000000000010F /* ApplianceManifestTests.swift */,
+			);
+		};
+		A00000010000000000000063 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A00000010000000000000110 /* ApplianceManifest.app */,
+				A00000010000000000000111 /* ApplianceManifestTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A00000010000000000000064 /* supabase */ = {
+			isa = PBXGroup;
+			path = supabase;
+			sourceTree = "<group>";
+		};
+		A00000010000000000000071 /* Models */ = {
+			isa = PBXGroup;
+			path = Models;
+			sourceTree = "<group>";
+			children = (
+				A00000010000000000000102 /* AppModels.swift */,
+			);
+		};
+		A00000010000000000000072 /* Services */ = {
+			isa = PBXGroup;
+			path = Services;
+			sourceTree = "<group>";
+			children = (
+				A00000010000000000000103 /* AppEnvironment.swift */,
+				A00000010000000000000104 /* SupabaseBackendService.swift */,
+				A00000010000000000000105 /* Infrastructure.swift */,
+				A00000010000000000000106 /* SpreadsheetExportService.swift */,
+			);
+		};
+		A00000010000000000000073 /* ViewModels */ = {
+			isa = PBXGroup;
+			path = ViewModels;
+			sourceTree = "<group>";
+			children = (
+				A00000010000000000000107 /* AppViewModel.swift */,
+				A00000010000000000000108 /* NewManifestViewModel.swift */,
+			);
+		};
+		A00000010000000000000074 /* Views */ = {
+			isa = PBXGroup;
+			path = Views;
+			sourceTree = "<group>";
+			children = (
+				A00000010000000000000109 /* RootView.swift */,
+				A0000001000000000000010A /* AuthView.swift */,
+				A0000001000000000000010B /* ManifestListView.swift */,
+				A0000001000000000000010C /* ManifestDetailView.swift */,
+				A0000001000000000000010D /* NewManifestView.swift */,
+			);
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A00000010000000000000040 /* ApplianceManifest */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00000010000000000000081 /* Build configuration list for PBXNativeTarget "ApplianceManifest" */;
+			buildPhases = (
+				A00000010000000000000082 /* Sources */,
+				A00000010000000000000050 /* Frameworks */,
+				A00000010000000000000083 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ApplianceManifest;
+			productName = ApplianceManifest;
+			productReference = A00000010000000000000110 /* ApplianceManifest.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A00000010000000000000041 /* ApplianceManifestTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00000010000000000000084 /* Build configuration list for PBXNativeTarget "ApplianceManifestTests" */;
+			buildPhases = (
+				A00000010000000000000085 /* Sources */,
+				A00000010000000000000051 /* Frameworks */,
+				A00000010000000000000086 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A00000010000000000000087 /* PBXTargetDependency */,
+			);
+			name = ApplianceManifestTests;
+			productName = ApplianceManifestTests;
+			productReference = A00000010000000000000111 /* ApplianceManifestTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A00000010000000000000030 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					A00000010000000000000040 = {
+						CreatedOnToolsVersion = 26.3;
+					};
+					A00000010000000000000041 = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = A00000010000000000000040;
+					};
+				};
+			};
+			buildConfigurationList = A00000010000000000000088 /* Build configuration list for PBXProject "ApplianceManifest" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A00000010000000000000060;
+			productRefGroup = A00000010000000000000063 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A00000010000000000000040 /* ApplianceManifest */,
+				A00000010000000000000041 /* ApplianceManifestTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A00000010000000000000083 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00000010000000000000086 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A00000010000000000000082 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00000010000000000000001 /* ApplianceManifestApp.swift in Sources */,
+				A00000010000000000000002 /* AppModels.swift in Sources */,
+				A00000010000000000000003 /* AppEnvironment.swift in Sources */,
+				A00000010000000000000004 /* SupabaseBackendService.swift in Sources */,
+				A00000010000000000000005 /* Infrastructure.swift in Sources */,
+				A00000010000000000000006 /* SpreadsheetExportService.swift in Sources */,
+				A00000010000000000000007 /* AppViewModel.swift in Sources */,
+				A00000010000000000000008 /* NewManifestViewModel.swift in Sources */,
+				A00000010000000000000009 /* RootView.swift in Sources */,
+				A0000001000000000000000A /* AuthView.swift in Sources */,
+				A0000001000000000000000B /* ManifestListView.swift in Sources */,
+				A0000001000000000000000C /* ManifestDetailView.swift in Sources */,
+				A0000001000000000000000D /* NewManifestView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00000010000000000000085 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A0000001000000000000000E /* ApplianceManifestTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A00000010000000000000087 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A00000010000000000000040 /* ApplianceManifest */;
+			targetProxy = A00000010000000000000020 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A00000010000000000000090 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ApplianceManifest/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.alainfumero.ApplianceManifest;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		A00000010000000000000091 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ApplianceManifest/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.alainfumero.ApplianceManifest;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		A00000010000000000000092 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.alainfumero.ApplianceManifestTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ApplianceManifest.app/ApplianceManifest";
+			};
+			name = Debug;
+		};
+		A00000010000000000000093 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.alainfumero.ApplianceManifestTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ApplianceManifest.app/ApplianceManifest";
+			};
+			name = Release;
+		};
+		A00000010000000000000094 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A00000010000000000000095 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A00000010000000000000081 /* Build configuration list for PBXNativeTarget "ApplianceManifest" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000010000000000000090 /* Debug */,
+				A00000010000000000000091 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A00000010000000000000084 /* Build configuration list for PBXNativeTarget "ApplianceManifestTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000010000000000000092 /* Debug */,
+				A00000010000000000000093 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A00000010000000000000088 /* Build configuration list for PBXProject "ApplianceManifest" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000010000000000000094 /* Debug */,
+				A00000010000000000000095 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A00000010000000000000030 /* Project object */;
+}
