@@ -6,6 +6,14 @@ struct NewManifestView: View {
     @Binding var isPresented: Bool
     @StateObject private var viewModel: NewManifestViewModel
     @State private var isShowingCamera = false
+    @State private var selectedSourceType: UIImagePickerController.SourceType = .camera
+    @State private var isChoosingPhotoSource = false
+    @State private var showNotApplianceToast = false
+    @FocusState private var focusedField: Field?
+
+    private enum Field {
+        case title, loadReference, loadCost, margin, manualModel
+    }
 
     init(isPresented: Binding<Bool>, backend: BackendServicing) {
         _isPresented = isPresented
@@ -14,85 +22,486 @@ struct NewManifestView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Manifest") {
-                    TextField("Manifest title", text: $viewModel.title)
-                    TextField("Load reference", text: $viewModel.loadReference)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    infoCard
+                    scanCard
+                    pricingCard
+                    queueSection
                 }
-
-                Section("Scanned Appliances") {
-                    if viewModel.draftItems.isEmpty {
-                        Text("No stickers scanned yet.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(viewModel.draftItems) { draft in
-                            Button {
-                                viewModel.selectedDraftID = draft.id
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(draft.productName.isEmpty ? "Needs review" : draft.productName)
-                                        .font(.headline)
-                                    Text(draft.modelNumber.isEmpty ? "Model pending" : draft.modelNumber)
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        .onDelete { offsets in
-                            offsets.map { viewModel.draftItems[$0].id }.forEach(viewModel.removeDraft)
-                        }
-                    }
-
-                    Button {
-                        isShowingCamera = true
-                    } label: {
-                        Label("Scan Sticker", systemImage: "camera.viewfinder")
-                    }
-                }
+                .padding(.horizontal, EnterpriseTheme.pagePadding)
+                .padding(.top, 20)
+                .padding(.bottom, 140)
             }
-            .navigationTitle("New Manifest")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") { isPresented = false }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Save") {
+            .navigationTitle("New Load")
+            .navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .bottom) {
+                EnterpriseActionBar {
+                    if focusedField != nil {
+                        Button("Dismiss Keyboard") { focusedField = nil }
+                            .buttonStyle(EnterpriseSecondaryButtonStyle())
+                    }
+                    Button("Save Manifest") {
+                        focusedField = nil
                         Task {
+                            viewModel.isSaving = true
+                            defer { viewModel.isSaving = false }
+                            var loadCost: Decimal? = nil
+                            var targetMarginPct: Decimal? = nil
+                            if viewModel.pricingMode == .loadBased {
+                                viewModel.applyLoadBasedPricing()
+                                loadCost = Decimal(string: viewModel.loadCostText)
+                                targetMarginPct = Decimal(string: viewModel.targetMarginText)
+                            }
                             let didSave = await appViewModel.addManifest(
                                 title: viewModel.title,
-                                loadReference: viewModel.loadReference,
-                                items: viewModel.draftItems
+                                loadReference: viewModel.resolvedLoadReference,
+                                items: viewModel.draftItems,
+                                loadCost: loadCost,
+                                targetMarginPct: targetMarginPct
                             )
-                            if didSave {
-                                isPresented = false
-                            }
+                            if didSave { isPresented = false }
                         }
                     }
-                    .disabled(!viewModel.canSave)
+                    .buttonStyle(EnterprisePrimaryButtonStyle())
+                    .disabled(!viewModel.canSave || viewModel.isSaving || appViewModel.isLoading)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { isPresented = false } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(EnterpriseTheme.textSecondary)
+                            .padding(7)
+                            .background(EnterpriseTheme.surfacePrimary)
+                            .clipShape(Circle())
+                            .overlay { Circle().stroke(EnterpriseTheme.border, lineWidth: 1) }
+                    }
                 }
             }
             .sheet(isPresented: $isShowingCamera) {
-                CameraPicker { image in
+                CameraPicker(sourceType: selectedSourceType) { image in
                     if let data = image.jpegData(compressionQuality: 0.85) {
                         Task { await viewModel.ingestPhoto(data: data) }
                     }
                 }
             }
+            .confirmationDialog(
+                "Choose Photo Source",
+                isPresented: $isChoosingPhotoSource,
+                titleVisibility: .visible
+            ) {
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    Button("Take Photo") {
+                        selectedSourceType = .camera
+                        isShowingCamera = true
+                    }
+                }
+                Button("Choose From Camera Roll") {
+                    selectedSourceType = .photoLibrary
+                    isShowingCamera = true
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Pick how you want to add the appliance sticker image.")
+            }
             .sheet(item: selectedDraftBinding) { draft in
                 DraftReviewView(draft: draft) { updated in
-                    viewModel.updateDraft(updated)
+                    await viewModel.saveReviewedDraft(updated)
                 }
             }
             .overlay {
-                if viewModel.isScanning {
-                    ProgressView("Reading sticker and checking MSRP...")
-                        .padding()
-                        .background(.thinMaterial)
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                if viewModel.isScanning || viewModel.isSaving {
+                    ScanningOverlay(message: viewModel.isSaving
+                        ? "Saving manifest…"
+                        : "Reading sticker and checking MSRP…")
+                }
+            }
+            .alert("Scan Error", isPresented: Binding(
+                get: { viewModel.errorMessage != nil },
+                set: { if !$0 { viewModel.errorMessage = nil } }
+            )) {
+                Button("OK") { viewModel.errorMessage = nil }
+            } message: {
+                Text(viewModel.errorMessage ?? "")
+            }
+            .onChange(of: viewModel.notApplianceDetected) { _, detected in
+                guard detected else { return }
+                viewModel.notApplianceDetected = false
+                showNotApplianceToast = true
+                focusedField = .manualModel
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    showNotApplianceToast = false
+                }
+            }
+            .overlay(alignment: .top) {
+                if showNotApplianceToast {
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.orange)
+                        Text("Not an appliance — type the model number below")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(EnterpriseTheme.textPrimary)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 11)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(EnterpriseTheme.border, lineWidth: 1)
+                    }
+                    .shadow(color: EnterpriseTheme.shadow, radius: 8, x: 0, y: 4)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: showNotApplianceToast)
+                }
+            }
+            .enterpriseScreen()
+        }
+    }
+
+    // MARK: - Info Card
+
+    private var infoCard: some View {
+        EnterpriseCard {
+            EnterpriseSectionHeader(
+                eyebrow: "New Load",
+                title: "New load manifest",
+                subtitle: "Name the load, scan sticker photos, and review every item before saving."
+            )
+
+            EnterpriseField(
+                title: "Manifest Title",
+                prompt: "Friday truck load",
+                text: $viewModel.title
+            )
+            .focused($focusedField, equals: .title)
+            .onSubmit { focusedField = .loadReference }
+
+            EnterpriseField(
+                title: "Load Reference (Optional)",
+                prompt: "LOAD-001",
+                text: $viewModel.loadReference,
+                capitalization: .never
+            )
+            .focused($focusedField, equals: .loadReference)
+        }
+    }
+
+    // MARK: - Scan Card
+
+    private var scanCard: some View {
+        EnterpriseCard(accentLeft: EnterpriseTheme.accent) {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(EnterpriseTheme.accentDim)
+                        .frame(width: 48, height: 48)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(EnterpriseTheme.accent.opacity(0.3), lineWidth: 1)
+                        }
+                    Image(systemName: "camera.viewfinder")
+                        .font(.system(size: 22))
+                        .foregroundStyle(EnterpriseTheme.accent)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Add Items")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(EnterpriseTheme.textPrimary)
+                    Text("Photograph a sticker or type a model number to look it up.")
+                        .font(.caption)
+                        .foregroundStyle(EnterpriseTheme.textSecondary)
+                }
+
+                Spacer()
+            }
+
+            // Photo scan
+            Button {
+                focusedField = nil
+                isChoosingPhotoSource = true
+            } label: {
+                Label("Scan Sticker", systemImage: "camera.fill")
+            }
+            .buttonStyle(EnterprisePrimaryButtonStyle())
+
+            // Divider
+            HStack(spacing: 10) {
+                Rectangle()
+                    .fill(EnterpriseTheme.border)
+                    .frame(height: 1)
+                Text("or")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(EnterpriseTheme.textTertiary)
+                Rectangle()
+                    .fill(EnterpriseTheme.border)
+                    .frame(height: 1)
+            }
+
+            // Manual model number entry
+            HStack(spacing: 8) {
+                TextField("Type model number…", text: $viewModel.manualModelNumber)
+                    .font(.system(size: 14, design: .monospaced))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.characters)
+                    .submitLabel(.search)
+                    .focused($focusedField, equals: .manualModel)
+                    .onSubmit {
+                        Task { await viewModel.lookupManualModelNumber() }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(EnterpriseTheme.backgroundSecondary)
+                    .clipShape(RoundedRectangle(cornerRadius: EnterpriseTheme.fieldRadius, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: EnterpriseTheme.fieldRadius, style: .continuous)
+                            .stroke(focusedField == .manualModel
+                                    ? EnterpriseTheme.accent.opacity(0.5)
+                                    : EnterpriseTheme.border,
+                                    lineWidth: 1)
+                    }
+
+                Button {
+                    focusedField = nil
+                    Task { await viewModel.lookupManualModelNumber() }
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 42, height: 42)
+                        .background(viewModel.manualModelNumber.trimmingCharacters(in: .whitespaces).isEmpty
+                                    ? EnterpriseTheme.accent.opacity(0.35)
+                                    : EnterpriseTheme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: EnterpriseTheme.fieldRadius, style: .continuous))
+                }
+                .disabled(viewModel.manualModelNumber.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+    }
+
+    // MARK: - Pricing Card
+
+    private var pricingCard: some View {
+        EnterpriseCard(accentLeft: EnterpriseTheme.warning) {
+            // Header
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(EnterpriseTheme.warning.opacity(0.12))
+                        .frame(width: 48, height: 48)
+                    Image(systemName: "tag.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(EnterpriseTheme.warning)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Pricing Strategy")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(EnterpriseTheme.textPrimary)
+                    Text(viewModel.pricingMode == .perItem
+                         ? "Set price per item during review."
+                         : "Enter load cost and margin — prices auto-calculated on save.")
+                        .font(.caption)
+                        .foregroundStyle(EnterpriseTheme.textSecondary)
+                        .lineLimit(2)
+                }
+                Spacer()
+            }
+
+            // Mode toggle
+            Picker("Pricing Mode", selection: $viewModel.pricingMode) {
+                ForEach(PricingMode.allCases, id: \.self) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .tint(EnterpriseTheme.warning)
+            .onChange(of: viewModel.pricingMode) { _, _ in
+                viewModel.applyLoadBasedPricing()
+            }
+
+            // Load-based fields
+            if viewModel.pricingMode == .loadBased {
+                VStack(spacing: 0) {
+                    EnterpriseField(
+                        title: "Total Load Cost ($)",
+                        prompt: "0.00",
+                        text: $viewModel.loadCostText,
+                        keyboardType: .decimalPad,
+                        capitalization: .never
+                    )
+                    .focused($focusedField, equals: .loadCost)
+                    .onSubmit { focusedField = .margin }
+                    .onChange(of: viewModel.loadCostText) { _, _ in
+                        viewModel.applyLoadBasedPricing()
+                    }
+
+                    EnterpriseField(
+                        title: "Target Profit Margin (%)",
+                        prompt: "30",
+                        text: $viewModel.targetMarginText,
+                        keyboardType: .decimalPad,
+                        capitalization: .never
+                    )
+                    .focused($focusedField, equals: .margin)
+                    .onChange(of: viewModel.targetMarginText) { _, _ in
+                        viewModel.applyLoadBasedPricing()
+                    }
+                }
+
+                // Live projection
+                if let revenue = viewModel.projectedRevenue,
+                   let cost = Decimal(string: viewModel.loadCostText), cost > 0 {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("PROJECTED REVENUE")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(EnterpriseTheme.textTertiary)
+                                .tracking(1.2)
+                            Text(Formatters.currencyString(revenue))
+                                .font(.system(size: 20, weight: .bold, design: .monospaced))
+                                .foregroundStyle(EnterpriseTheme.success)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 3) {
+                            Text("PROFIT")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(EnterpriseTheme.textTertiary)
+                                .tracking(1.2)
+                            Text(Formatters.currencyString(revenue - cost))
+                                .font(.system(size: 20, weight: .bold, design: .monospaced))
+                                .foregroundStyle(EnterpriseTheme.warning)
+                        }
+                    }
+                    .padding(12)
+                    .background(EnterpriseTheme.success.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(EnterpriseTheme.success.opacity(0.18), lineWidth: 1)
+                    }
+
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11))
+                            .foregroundStyle(EnterpriseTheme.accent)
+                        Text("Prices are distributed proportionally by MSRP and condition, capped at retail.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(EnterpriseTheme.textTertiary)
+                    }
                 }
             }
         }
     }
+
+    // MARK: - Queue Section
+
+    private var queueSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                HStack(spacing: 6) {
+                    RoundedRectangle(cornerRadius: 1, style: .continuous)
+                        .fill(EnterpriseTheme.textTertiary)
+                        .frame(width: 12, height: 2)
+                    Text("SCAN QUEUE")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(EnterpriseTheme.textSecondary)
+                        .tracking(1.6)
+                }
+                Spacer()
+                if !viewModel.draftItems.isEmpty {
+                    Text("\(viewModel.draftItems.count) items")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(EnterpriseTheme.textTertiary)
+                }
+            }
+
+            if viewModel.draftItems.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "camera.badge.clock")
+                        .font(.system(size: 28))
+                        .foregroundStyle(EnterpriseTheme.textTertiary)
+                    Text("No stickers scanned yet.")
+                        .font(.subheadline)
+                        .foregroundStyle(EnterpriseTheme.textTertiary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 40)
+                .background(EnterpriseTheme.surfacePrimary)
+                .clipShape(RoundedRectangle(cornerRadius: EnterpriseTheme.cardRadius, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: EnterpriseTheme.cardRadius, style: .continuous)
+                        .stroke(EnterpriseTheme.border, lineWidth: 1)
+                }
+            } else {
+                ForEach(viewModel.draftItems) { draft in
+                    EnterpriseCard(accentLeft: draft.lookupStatus.badgeTint) {
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(draft.productName.isEmpty ? "Needs review" : draft.productName)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(draft.productName.isEmpty
+                                        ? EnterpriseTheme.textTertiary
+                                        : EnterpriseTheme.textPrimary)
+                                    .lineLimit(2)
+
+                                Text(draft.modelNumber.isEmpty ? "Model pending" : draft.modelNumber.uppercased())
+                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(EnterpriseTheme.textSecondary)
+
+                                StatusBadge(text: draft.lookupStatus.displayLabel, tint: draft.lookupStatus.badgeTint)
+                            }
+
+                            Spacer()
+
+                            VStack(alignment: .trailing, spacing: 10) {
+                                Text(draft.msrpText.isEmpty ? "—" : "$\(draft.msrpText)")
+                                    .font(.system(size: 16, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(draft.msrpText.isEmpty
+                                        ? EnterpriseTheme.textTertiary
+                                        : EnterpriseTheme.textPrimary)
+
+                                Text("QTY \(draft.quantity)")
+                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(EnterpriseTheme.textSecondary)
+
+                                Button("Review") {
+                                    viewModel.selectedDraftID = draft.id
+                                }
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(EnterpriseTheme.accent)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(EnterpriseTheme.accentDim)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(EnterpriseTheme.accent.opacity(0.3), lineWidth: 0.5)
+                                }
+                            }
+                        }
+                    }
+                    .onTapGesture {
+                        viewModel.selectedDraftID = draft.id
+                    }
+                    .swipeActions {
+                        Button(role: .destructive) {
+                            viewModel.removeDraft(id: draft.id)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Helpers
 
     private var selectedDraftBinding: Binding<DraftManifestItem?> {
         Binding<DraftManifestItem?>(
@@ -101,63 +510,249 @@ struct NewManifestView: View {
                 return viewModel.draftItems.first(where: { $0.id == id })
             },
             set: { newValue in
-                if let newValue {
-                    viewModel.updateDraft(newValue)
-                }
+                if let newValue { viewModel.updateDraft(newValue) }
                 viewModel.selectedDraftID = nil
             }
         )
     }
 }
 
+// MARK: - Scanning Overlay
+
+private struct ScanningOverlay: View {
+    let message: String
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.25).ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .tint(EnterpriseTheme.accent)
+                    .scaleEffect(1.2)
+
+                Text(message)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(EnterpriseTheme.textPrimary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 24)
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(EnterpriseTheme.border, lineWidth: 1)
+            }
+            .shadow(color: Color.black.opacity(0.12), radius: 24, x: 0, y: 8)
+        }
+    }
+}
+
+// MARK: - Draft Review View
+
 private struct DraftReviewView: View {
     @Environment(\.dismiss) private var dismiss
     @State var draft: DraftManifestItem
-    let onSave: (DraftManifestItem) -> Void
+    @FocusState private var focusedField: Field?
+    let onSave: (DraftManifestItem) async -> Void
+
+    private enum Field {
+        case model, name, msrp, ourPrice
+    }
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Detected") {
-                    TextField("Model Number", text: $draft.modelNumber)
-                        .textInputAutocapitalization(.characters)
-                    TextField("Product Name", text: $draft.productName)
-                    TextField("MSRP", text: $draft.msrpText)
-                        .keyboardType(.decimalPad)
-                    Stepper("Quantity: \(draft.quantity)", value: $draft.quantity, in: 1...50)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    detailsCard
+                    signalCard
                 }
-
-                Section("Lookup") {
-                    Text("Status: \(draft.lookupStatus.rawValue)")
-                    if !draft.source.isEmpty {
-                        Text("Source: \(draft.source)")
+                .padding(.horizontal, EnterpriseTheme.pagePadding)
+                .padding(.top, 20)
+                .padding(.bottom, 130)
+            }
+            .navigationTitle("Review Item")
+            .navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .bottom) {
+                EnterpriseActionBar {
+                    if focusedField != nil {
+                        Button("Dismiss Keyboard") { focusedField = nil }
+                            .buttonStyle(EnterpriseSecondaryButtonStyle())
                     }
-                    if draft.confidence > 0 {
-                        Text("Confidence: \(Int(draft.confidence * 100))%")
+                    Button("Save Item") {
+                        draft.modelNumber = ModelNumberNormalizer.normalize(draft.modelNumber)
+                        Task {
+                            await onSave(draft)
+                            dismiss()
+                        }
+                    }
+                    .buttonStyle(EnterprisePrimaryButtonStyle())
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(EnterpriseTheme.textSecondary)
+                            .padding(7)
+                            .background(EnterpriseTheme.surfacePrimary)
+                            .clipShape(Circle())
+                            .overlay { Circle().stroke(EnterpriseTheme.border, lineWidth: 1) }
                     }
                 }
             }
-            .navigationTitle("Review Item")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
-                        draft.modelNumber = ModelNumberNormalizer.normalize(draft.modelNumber)
-                        onSave(draft)
-                        dismiss()
+            .enterpriseScreen()
+        }
+    }
+
+    private var detailsCard: some View {
+        EnterpriseCard {
+            EnterpriseSectionHeader(
+                eyebrow: "Review",
+                title: "Confirm appliance details",
+                subtitle: "Confirm the model, product name, MSRP, our price, condition, and quantity before saving."
+            )
+
+            EnterpriseField(
+                title: "Model Number",
+                prompt: "Enter model number",
+                text: $draft.modelNumber,
+                capitalization: .characters
+            )
+            .focused($focusedField, equals: .model)
+            .onSubmit { focusedField = .name }
+
+            EnterpriseField(
+                title: "Product Name",
+                prompt: "Enter product name",
+                text: $draft.productName
+            )
+            .focused($focusedField, equals: .name)
+            .onSubmit { focusedField = .msrp }
+
+            EnterpriseField(
+                title: "MSRP",
+                prompt: "0.00",
+                text: $draft.msrpText,
+                keyboardType: .decimalPad,
+                capitalization: .never,
+                submitLabel: .next
+            )
+            .focused($focusedField, equals: .msrp)
+            .onSubmit { focusedField = .ourPrice }
+
+            EnterpriseField(
+                title: "Our Price",
+                prompt: "0.00",
+                text: $draft.ourPriceText,
+                keyboardType: .decimalPad,
+                capitalization: .never,
+                submitLabel: .done
+            )
+            .focused($focusedField, equals: .ourPrice)
+
+            // Condition picker
+            VStack(alignment: .leading, spacing: 7) {
+                Text("CONDITION")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(EnterpriseTheme.textSecondary)
+                    .tracking(1.2)
+
+                Picker("Condition", selection: $draft.condition) {
+                    ForEach(ItemCondition.allCases) { condition in
+                        Text(condition.displayLabel).tag(condition)
                     }
+                }
+                .pickerStyle(.segmented)
+                .tint(EnterpriseTheme.accent)
+            }
+            .padding(14)
+            .background(EnterpriseTheme.backgroundSecondary)
+            .clipShape(RoundedRectangle(cornerRadius: EnterpriseTheme.fieldRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: EnterpriseTheme.fieldRadius, style: .continuous)
+                    .stroke(EnterpriseTheme.border, lineWidth: 1)
+            }
+
+            // Quantity stepper
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("QUANTITY")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(EnterpriseTheme.textSecondary)
+                        .tracking(1.2)
+                    Text("\(draft.quantity)")
+                        .font(.system(size: 22, weight: .bold, design: .monospaced))
+                        .foregroundStyle(EnterpriseTheme.textPrimary)
+                }
+                Spacer()
+                Stepper("", value: $draft.quantity, in: 1...50)
+                    .labelsHidden()
+                    .tint(EnterpriseTheme.accent)
+            }
+            .padding(14)
+            .background(EnterpriseTheme.backgroundSecondary)
+            .clipShape(RoundedRectangle(cornerRadius: EnterpriseTheme.fieldRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: EnterpriseTheme.fieldRadius, style: .continuous)
+                    .stroke(EnterpriseTheme.border, lineWidth: 1)
+            }
+        }
+    }
+
+    private var signalCard: some View {
+        EnterpriseCard {
+            EnterpriseSectionHeader(eyebrow: "Lookup", title: "Signal quality")
+
+            HStack(spacing: 14) {
+                StatusBadge(text: draft.lookupStatus.displayLabel, tint: draft.lookupStatus.badgeTint)
+
+                if draft.confidence > 0 {
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("CONFIDENCE")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(EnterpriseTheme.textTertiary)
+                            .tracking(1.2)
+                        Text("\(Int(draft.confidence * 100))%")
+                            .font(.system(size: 18, weight: .bold, design: .monospaced))
+                            .foregroundStyle(draft.confidence > 0.7
+                                ? EnterpriseTheme.success
+                                : draft.confidence > 0.4
+                                    ? EnterpriseTheme.warning
+                                    : EnterpriseTheme.danger)
+                    }
+                }
+            }
+
+            if !draft.source.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "network")
+                        .font(.caption2)
+                        .foregroundStyle(EnterpriseTheme.textTertiary)
+                    Text("Source: \(draft.source)")
+                        .font(.caption)
+                        .foregroundStyle(EnterpriseTheme.textTertiary)
                 }
             }
         }
     }
 }
 
+// MARK: - Camera Picker
+
 private struct CameraPicker: UIViewControllerRepresentable {
+    let sourceType: UIImagePickerController.SourceType
     let onImage: (UIImage) -> Void
     @Environment(\.dismiss) private var dismiss
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
-        picker.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
+        picker.sourceType = UIImagePickerController.isSourceTypeAvailable(sourceType) ? sourceType : .photoLibrary
         picker.delegate = context.coordinator
         return picker
     }
@@ -181,7 +776,8 @@ private struct CameraPicker: UIViewControllerRepresentable {
             dismiss()
         }
 
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
             if let image = info[.originalImage] as? UIImage {
                 onImage(image)
             }
