@@ -5,7 +5,11 @@ Deno.serve(async (request) => {
     return new Response("Method not allowed", { status: 405 });
   }
 
-  const token = (request.headers.get("Authorization") ?? "").replace("Bearer ", "").trim();
+  // Accept token from X-User-Token (preferred) or Authorization header.
+  // Using X-User-Token lets the gateway use the anon key in Authorization
+  // so the gateway never rejects the request due to an expired user JWT.
+  const token = request.headers.get("X-User-Token")?.trim()
+    ?? (request.headers.get("Authorization") ?? "").replace("Bearer ", "").trim();
   if (!token) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401, headers: { "Content-Type": "application/json" },

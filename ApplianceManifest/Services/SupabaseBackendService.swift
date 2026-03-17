@@ -591,10 +591,15 @@ final class SupabaseBackendService: BackendServicing {
     func joinOrgWithInvite(code: String) async throws -> OrganizationEntitlement {
         struct Body: Encodable { let inviteCode: String }
         let session = try await requireSession()
+        // Use anonBearerHeaders so the gateway accepts the request regardless
+        // of whether the user's access token has expired. The user token is
+        // passed in X-User-Token so the function can verify it via getUser().
+        var headers = anonBearerHeaders
+        headers["X-User-Token"] = session.accessToken
         return try await httpClient.send(
             to: environment.functionsURL.appending(path: "join-org-with-invite"),
             method: "POST",
-            headers: authenticatedHeaders(token: session.accessToken, prefer: nil),
+            headers: headers,
             body: Body(inviteCode: code)
         )
     }
