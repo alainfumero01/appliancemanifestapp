@@ -5,6 +5,7 @@ import StoreKit
 final class SubscriptionService: ObservableObject {
     @Published private(set) var products: [Product] = []
 
+    var appAccountToken: UUID?
     var backend: (any BackendServicing)?
 
     private let productIDs = LoadScanPlanID.allCases
@@ -31,13 +32,22 @@ final class SubscriptionService: ObservableObject {
             throw AppError.lookupFailed("Subscription product is not available yet. Configure it in App Store Connect.")
         }
 
-        let result = try await product.purchase()
+        let result: Product.PurchaseResult
+        if let appAccountToken {
+            result = try await product.purchase(options: [.appAccountToken(appAccountToken)])
+        } else {
+            result = try await product.purchase()
+        }
+
         switch result {
         case .success(let verification):
             switch verification {
             case .verified(let transaction):
                 await transaction.finish()
                 await backend?.sendSubscriptionEmail(plan: plan.rawValue)
+                // Xcode Cloud can lag local SDK symbol exposure for signed JWS helpers.
+                // The backend accepts a nil JWS and can still activate by product ID,
+                // while App Store Server Notifications handle the fully verified path.
                 return PurchaseResult(productID: product.id, transactionJWS: nil)
             case .unverified:
                 throw AppError.lookupFailed("Purchase could not be verified by StoreKit.")

@@ -23,6 +23,8 @@ final class ApplianceManifestTests: XCTestCase {
                     modelNumber: "ABC123",
                     productName: "Washer",
                     msrp: 599.99,
+                    ourPrice: 0,
+                    condition: .used,
                     quantity: 2,
                     photoPath: "stickers/path.jpg",
                     lookupStatus: .confirmed,

@@ -2,25 +2,67 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var appViewModel: AppViewModel
+    @AppStorage("loadscan.hasSeenOnboarding") private var hasSeenOnboarding = false
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if appViewModel.session == nil {
+        Group {
+            if appViewModel.session == nil {
+                NavigationStack {
                     AuthView()
-                } else {
-                    ManifestListView()
+                        .navigationBarTitleDisplayMode(.inline)
                 }
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbarColorScheme(.light, for: .navigationBar)
+            } else {
+                mainTabView
+                    .fullScreenCover(isPresented: .constant(!hasSeenOnboarding)) {
+                        OnboardingView()
+                    }
             }
-            .navigationTitle(appViewModel.session == nil ? "Appliance Manifest" : "Manifests")
         }
+        .preferredColorScheme(.light)
         .overlay(alignment: .top) {
-            if let errorMessage = appViewModel.errorMessage {
-                ErrorBanner(message: errorMessage) {
-                    appViewModel.errorMessage = nil
-                }
+            if let msg = appViewModel.errorMessage {
+                ErrorBanner(message: msg) { appViewModel.errorMessage = nil }
             }
         }
+    }
+
+    private var mainTabView: some View {
+        TabView(selection: $appViewModel.selectedTab) {
+            NavigationStack {
+                DashboardView()
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarColorScheme(.light, for: .navigationBar)
+            .tabItem { Label("Dashboard", systemImage: "chart.bar.fill") }
+            .tag(0)
+
+            NavigationStack {
+                ManifestListView()
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarColorScheme(.light, for: .navigationBar)
+            .tabItem { Label("Loads", systemImage: "doc.text.magnifyingglass") }
+            .tag(1)
+
+            NavigationStack {
+                MembershipView()
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarColorScheme(.light, for: .navigationBar)
+            .tabItem { Label("Membership", systemImage: "creditcard") }
+            .tag(2)
+
+            NavigationStack {
+                SettingsView()
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarColorScheme(.light, for: .navigationBar)
+            .tabItem { Label("Settings", systemImage: "gearshape") }
+            .tag(3)
+        }
+        .tint(EnterpriseTheme.accent)
     }
 }
 
@@ -30,6 +72,9 @@ private struct ErrorBanner: View {
 
     var body: some View {
         HStack {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.footnote)
+                .foregroundStyle(.white)
             Text(message)
                 .font(.footnote)
                 .foregroundStyle(.white)
@@ -38,9 +83,11 @@ private struct ErrorBanner: View {
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.white)
         }
-        .padding()
-        .background(Color.red.opacity(0.9))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .padding()
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(EnterpriseTheme.danger.opacity(0.96))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, EnterpriseTheme.pagePadding)
+        .padding(.top, 8)
     }
 }

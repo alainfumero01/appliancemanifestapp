@@ -108,7 +108,9 @@ final class AppViewModel: ObservableObject {
 
     func generateInviteLink() async {
         do {
-            inviteLink = try await backend.createEnterpriseInviteLink()
+            _ = try await backend.createEnterpriseInviteLink()
+            inviteLink = nil
+            await loadInviteCodes()
             await loadOrgMembers()
             await refreshEntitlement()
         } catch {

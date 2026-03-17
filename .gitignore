@@ -1,0 +1,16 @@
+.DS_Store
+
+# Xcode user data
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Local build and export artifacts
+build/
+ExportOptions.plist
+
+# Local signing credentials
+AuthKey_*.p8
+
+# Supabase local temp state
+supabase/.temp/

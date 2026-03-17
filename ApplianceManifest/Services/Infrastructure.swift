@@ -1,17 +1,22 @@
 import Foundation
 import ImageIO
+import LocalAuthentication
 import Vision
 
-@MainActor
-final class HTTPClient {
+final class HTTPClient: @unchecked Sendable {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let session: URLSession
 
     init() {
         encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 90
+        config.timeoutIntervalForResource = 120
+        session = URLSession(configuration: config)
     }
 
     func send<T: Decodable, Body: Encodable>(
@@ -24,7 +29,7 @@ final class HTTPClient {
         request.httpMethod = method
         request.httpBody = try encoder.encode(body)
         headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
         if T.self == EmptyResponse.self, data.isEmpty {
             return EmptyResponse() as! T
@@ -40,7 +45,7 @@ final class HTTPClient {
         var request = URLRequest(url: url)
         request.httpMethod = method
         headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
         return try decoder.decode(T.self, from: data)
     }
@@ -53,7 +58,7 @@ final class HTTPClient {
         var request = URLRequest(url: url)
         request.httpMethod = method
         headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
     }
 
@@ -67,7 +72,7 @@ final class HTTPClient {
         request.httpMethod = method
         request.httpBody = body
         headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
     }
 
@@ -78,12 +83,14 @@ final class HTTPClient {
 
         guard (200..<300).contains(httpResponse.statusCode) else {
             let message = String(data: data, encoding: .utf8) ?? "Request failed."
+            if message.contains("not_appliance") {
+                throw AppError.notAppliance
+            }
             throw AppError.lookupFailed(message)
         }
     }
 }
 
-@MainActor
 final class SessionStore {
     private let defaults = UserDefaults.standard
     private let key = "appliance_manifest.session"
@@ -103,6 +110,40 @@ final class SessionStore {
 
     func clear() {
         defaults.removeObject(forKey: key)
+    }
+}
+
+@MainActor
+final class BiometricService {
+    private let defaults = UserDefaults.standard
+    private let enabledKey = "loadscan.biometrics_enabled"
+
+    var isEnabled: Bool {
+        get { defaults.bool(forKey: enabledKey) }
+        set { defaults.set(newValue, forKey: enabledKey) }
+    }
+
+    var canUseBiometrics: Bool {
+        LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+    }
+
+    var biometricType: LABiometryType {
+        let context = LAContext()
+        _ = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+        return context.biometryType
+    }
+
+    func authenticate() async -> Bool {
+        let context = LAContext()
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) else { return false }
+        do {
+            return try await context.evaluatePolicy(
+                .deviceOwnerAuthenticationWithBiometrics,
+                localizedReason: "Verify your identity to access LoadScan"
+            )
+        } catch {
+            return false
+        }
     }
 }
 
@@ -152,21 +193,58 @@ actor VisionOCRService {
     }
 
     private static func findBestModelNumber(in text: String) -> String {
-        let pattern = #"(?:MODEL|MOD|M/N|MODEL\sNO\.?)[:\s-]*([A-Z0-9\-]{5,})"#
-        if
-            let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
-            let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-            let range = Range(match.range(at: 1), in: text)
-        {
-            return String(text[range])
+        let t = text.uppercased()
+
+        // Primary: all common appliance sticker label variants
+        let labelPatterns: [String] = [
+            #"MODEL\s*(?:NO\.?|NUM(?:BER)?|#)?\s*[:\-#]?\s*([A-Z0-9][A-Z0-9\-\/\.]{4,24})"#,
+            #"MOD\.?\s*(?:NO\.?|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/\.]{4,24})"#,
+            #"M[\/\.]N\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/\.]{4,24})"#,
+            #"MODELE\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/\.]{4,24})"#,
+            #"MODELO\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/\.]{4,24})"#,
+            #"MODELL\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/\.]{4,24})"#,
+            #"ITEM\s*(?:NO\.?|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/\.]{4,24})"#,
+            #"PART\s*(?:NO\.?|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/\.]{4,24})"#,
+            #"CAT(?:ALOG)?\s*(?:NO\.?|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/\.]{4,24})"#,
+            #"MFG\.?\s*(?:MODEL|NO\.?|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/\.]{4,24})"#,
+            #"PRODUCT\s*(?:CODE|NO\.?|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/\.]{4,24})"#,
+            #"TYPE\s*(?:NO\.?|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/\.]{4,24})"#,
+        ]
+
+        for pattern in labelPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)),
+               let range = Range(match.range(at: 1), in: t) {
+                let candidate = String(t[range])
+                if isValidModelNumber(candidate) {
+                    return candidate
+                }
+            }
         }
 
-        let fallbackPattern = #"[A-Z0-9]{5,}(?:-[A-Z0-9]{2,})*"#
-        guard let regex = try? NSRegularExpression(pattern: fallbackPattern) else { return "" }
-        let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+        // Fallback: collect all alphanumeric tokens, score and pick the best
+        let tokenPattern = #"[A-Z0-9][A-Z0-9\-]{4,24}"#
+        guard let regex = try? NSRegularExpression(pattern: tokenPattern) else { return "" }
+        let matches = regex.matches(in: t, range: NSRange(t.startIndex..., in: t))
         return matches
-            .compactMap { Range($0.range, in: text).map { String(text[$0]) } }
-            .max(by: { $0.count < $1.count }) ?? ""
+            .compactMap { Range($0.range, in: t).map { String(t[$0]) } }
+            .filter { isValidModelNumber($0) }
+            .max(by: { modelNumberScore($0) < modelNumberScore($1) }) ?? ""
+    }
+
+    // Must have at least 1 letter AND 2 digits, length 5–22
+    private static func isValidModelNumber(_ s: String) -> Bool {
+        guard s.count >= 5, s.count <= 22 else { return false }
+        let letters = s.filter(\.isLetter).count
+        let digits  = s.filter(\.isNumber).count
+        return letters >= 1 && digits >= 2
+    }
+
+    // Higher score = more model-number-like
+    private static func modelNumberScore(_ s: String) -> Int {
+        let letters = s.filter(\.isLetter).count
+        let digits  = s.filter(\.isNumber).count
+        return min(letters, digits) * 3 + min(s.count, 14)
     }
 }
 

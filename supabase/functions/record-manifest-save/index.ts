@@ -8,8 +8,11 @@ function unauthorized() {
 }
 
 Deno.serve(async (request) => {
-  const token = request.headers.get("X-User-Token")?.trim()
-    ?? (request.headers.get("Authorization") ?? "").replace("Bearer ", "").trim();
+  if (request.method !== "POST") {
+    return new Response("Method not allowed", { status: 405 });
+  }
+
+  const token = (request.headers.get("Authorization") ?? "").replace("Bearer ", "").trim();
   if (!token) return unauthorized();
 
   const admin = createClient(
@@ -35,24 +38,30 @@ Deno.serve(async (request) => {
     });
   }
 
-  const [{ data: org }, { count: memberCount }] = await Promise.all([
-    admin
-      .from("organizations")
-      .select("id,name,owner_id,subscription_type,billing_platform,subscription_status,app_store_product_id,subscription_expires_at,seat_limit,extra_seats,trial_manifest_limit,trial_manifests_used")
-      .eq("id", profile.org_id)
-      .single(),
-    admin
-      .from("org_members")
-      .select("user_id", { count: "exact", head: true })
-      .eq("org_id", profile.org_id),
-  ]);
+  const { data: org } = await admin
+    .from("organizations")
+    .select("id,name,owner_id,subscription_type,billing_platform,subscription_status,app_store_product_id,subscription_expires_at,seat_limit,extra_seats,trial_manifest_limit,trial_manifests_used")
+    .eq("id", profile.org_id)
+    .single();
 
-  if (!org) {
-    return new Response(JSON.stringify({ error: "Organization not found." }), {
-      status: 404,
-      headers: { "Content-Type": "application/json" },
-    });
+  if (org.subscription_status !== "active") {
+    if ((org.trial_manifests_used ?? 0) >= (org.trial_manifest_limit ?? 3)) {
+      return new Response(JSON.stringify({ error: "Free manifest limit reached." }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    await admin
+      .from("organizations")
+      .update({ trial_manifests_used: (org.trial_manifests_used ?? 0) + 1 })
+      .eq("id", org.id);
   }
+
+  const { count: memberCount } = await admin
+    .from("org_members")
+    .select("user_id", { count: "exact", head: true })
+    .eq("org_id", org.id);
 
   return Response.json({
     orgID: org.id,
@@ -66,7 +75,7 @@ Deno.serve(async (request) => {
     seatLimit: org.seat_limit,
     extraSeats: org.extra_seats,
     trialManifestLimit: org.trial_manifest_limit,
-    trialManifestsUsed: org.trial_manifests_used,
+    trialManifestsUsed: Math.min((org.trial_manifests_used ?? 0) + (org.subscription_status === "active" ? 0 : 1), org.trial_manifest_limit ?? 3),
     memberCount: memberCount ?? 0,
     isOwner: org.owner_id === user.id,
   });

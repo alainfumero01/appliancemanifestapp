@@ -190,10 +190,12 @@ final class SupabaseBackendService: BackendServicing {
     func fetchEntitlement() async throws -> OrganizationEntitlement {
         let session = try await requireSession()
         do {
+            var headers = anonBearerHeaders
+            headers["X-User-Token"] = session.accessToken
             return try await httpClient.send(
                 to: environment.functionsURL.appending(path: "current-entitlements"),
                 method: "GET",
-                headers: authenticatedHeaders(token: session.accessToken, prefer: nil)
+                headers: headers
             )
         } catch {
             // Edge function failed (network, cold start, JWT issue) — fall back to
@@ -220,20 +222,24 @@ final class SupabaseBackendService: BackendServicing {
 
     func createEnterpriseInviteLink() async throws -> EnterpriseInviteLink {
         let session = try await requireSession()
+        var headers = anonBearerHeaders
+        headers["X-User-Token"] = session.accessToken
         return try await httpClient.send(
-            to: environment.functionsURL.appending(path: "create-enterprise-invite-link"),
+            to: environment.functionsURL.appending(path: "enterprise-invite-link"),
             method: "POST",
-            headers: authenticatedHeaders(token: session.accessToken, prefer: nil),
+            headers: headers,
             body: EmptyRequest()
         )
     }
 
     func listOrgMembers() async throws -> [OrganizationMember] {
         let session = try await requireSession()
+        var headers = anonBearerHeaders
+        headers["X-User-Token"] = session.accessToken
         return try await httpClient.send(
             to: environment.functionsURL.appending(path: "list-org-members"),
             method: "GET",
-            headers: authenticatedHeaders(token: session.accessToken, prefer: nil)
+            headers: headers
         )
     }
 

@@ -6,11 +6,8 @@ struct ApplianceManifestApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            SplashView()
                 .environmentObject(viewModel)
-                .task {
-                    await viewModel.bootstrap()
-                }
         }
     }
 }

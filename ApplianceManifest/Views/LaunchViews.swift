@@ -37,6 +37,7 @@ struct MembershipView: View {
             subscriptionService.backend = appViewModel.backend
             await subscriptionService.loadProducts()
             await appViewModel.refreshEntitlement()
+            subscriptionService.appAccountToken = appViewModel.entitlement?.orgID ?? appViewModel.session?.user.orgID
         }
     }
 
@@ -291,31 +292,16 @@ struct MembershipView: View {
             sectionLabel("TEAM")
 
             VStack(alignment: .leading, spacing: 14) {
-                if let link = appViewModel.inviteLink {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Invite Link")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(EnterpriseTheme.textSecondary)
-                        Text(link.inviteURL)
-                            .font(.system(size: 11).monospaced())
-                            .foregroundStyle(EnterpriseTheme.textPrimary)
-                            .lineLimit(2)
-                        Text("\(link.currentMemberCount) of \(link.seatLimit) seats in use")
-                            .font(.system(size: 11))
-                            .foregroundStyle(EnterpriseTheme.textTertiary)
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Invite your team")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(EnterpriseTheme.textPrimary)
-                        Text("Generate a link so teammates can join your organization.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(EnterpriseTheme.textSecondary)
-                    }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Invite your team")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(EnterpriseTheme.textPrimary)
+                    Text("Generate invite codes for teammates to join your organization.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(EnterpriseTheme.textSecondary)
                 }
 
-                Button("Generate Invite Link") {
+                Button("Generate Invite Codes") {
                     Task { await appViewModel.generateInviteLink() }
                 }
                 .buttonStyle(EnterprisePrimaryButtonStyle())

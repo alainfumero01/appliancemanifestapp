@@ -40,7 +40,7 @@ Deno.serve(async (request) => {
       normalizedModelNumber: cached.normalized_model_number,
       productName: cached.product_name,
       msrp: Number(cached.msrp),
-      source: cached.source,
+      source: "catalog-cache",
       confidence: cached.confidence,
       status: "cached"
     };
@@ -55,7 +55,7 @@ Deno.serve(async (request) => {
     });
   }
 
-  const prompt = `You are helping an internal appliance resale team. Given the model number "${normalized}", infer the most likely appliance name and current MSRP. Respond only as JSON with keys productName, msrp, source, confidence.`;
+  const prompt = `You are helping an internal appliance resale team verify and price items. Given the model number "${normalized}", first determine if this is a home appliance (refrigerator, washer, dryer, dishwasher, oven, range, microwave, freezer, air conditioner, water heater, etc.). If it is, infer the most likely product name, current US MSRP, source, and confidence. If it is NOT a home appliance, set isAppliance to false and leave other fields empty/zero.`;
   const aiResponse = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -72,12 +72,13 @@ Deno.serve(async (request) => {
           schema: {
             type: "object",
             properties: {
+              isAppliance: { type: "boolean" },
               productName: { type: "string" },
               msrp: { type: "number" },
               source: { type: "string" },
               confidence: { type: "number" }
             },
-            required: ["productName", "msrp", "source", "confidence"],
+            required: ["isAppliance", "productName", "msrp", "source", "confidence"],
             additionalProperties: false
           }
         }
@@ -95,6 +96,13 @@ Deno.serve(async (request) => {
   const aiData = await aiResponse.json();
   const outputText = aiData.output?.[0]?.content?.[0]?.text ?? "{}";
   const parsed = JSON.parse(outputText);
+
+  if (parsed.isAppliance === false) {
+    return new Response(JSON.stringify({ error: "not_appliance" }), {
+      status: 422,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
 
   const response: LookupResponse = {
     normalizedModelNumber: normalized,

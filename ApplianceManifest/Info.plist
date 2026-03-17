@@ -10,6 +10,8 @@
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>CFBundleDisplayName</key>
+	<string>LoadScan</string>
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
@@ -18,18 +20,26 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Take photos of appliance stickers to build a manifest.</string>
+	<string>LoadScan uses your camera to photograph appliance stickers and extract model numbers.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Export manifest spreadsheets to your photo library if needed.</string>
+	<string>LoadScan can save exported load manifests to your photo library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Select sticker photos for model recognition.</string>
+	<string>Select sticker photos from your library for model number recognition.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Use Face ID to sign in to LoadScan quickly and securely.</string>
 	<key>SUPABASE_ANON_KEY</key>
-	<string></string>
+	<string>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh0dWtqeXpyaGNxdnprYWttcXNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MTg4NzAsImV4cCI6MjA4ODk5NDg3MH0.GyvgvFyLDalNqEUxBrNwumBec26g1m3oMtVb5Qe8H34</string>
+	<key>SUPABASE_FUNCTIONS_URL</key>
+	<string>https://xtukjyzrhcqvzkakmqsr.supabase.co/functions/v1</string>
 	<key>SUPABASE_URL</key>
-	<string></string>
+	<string>https://xtukjyzrhcqvzkakmqsr.supabase.co</string>
+	<key>UILaunchScreen</key>
+	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

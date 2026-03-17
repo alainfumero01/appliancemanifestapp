@@ -9,28 +9,50 @@ struct SpreadsheetExportService {
             "Created Date",
             "Model Number",
             "Product Name",
+            "Condition",
             "MSRP",
-            "Quantity",
-            "Line Total",
-            "Photo Link"
+            "Our Price"
         ]
 
-        let formatter = ISO8601DateFormatter()
-        let rows = manifest.items.map { item in
-            [
-                manifest.title,
-                manifest.loadReference,
-                formatter.string(from: manifest.createdAt),
-                item.modelNumber,
-                item.productName,
-                NSDecimalNumber(decimal: item.msrp).stringValue,
-                "\(item.quantity)",
-                NSDecimalNumber(decimal: item.lineTotal).stringValue,
-                item.photoPath ?? ""
-            ]
+        let dateFormatter = ISO8601DateFormatter()
+        let numberFormatter: NumberFormatter = {
+            let f = NumberFormatter()
+            f.numberStyle = .decimal
+            f.minimumFractionDigits = 2
+            f.maximumFractionDigits = 2
+            return f
+        }()
+
+        func decimalString(_ value: Decimal) -> String {
+            numberFormatter.string(from: NSDecimalNumber(decimal: value)) ?? "0.00"
         }
 
-        let csv = ([header] + rows)
+        let rows = manifest.items.flatMap { item in
+            (0 ..< item.quantity).map { _ in
+                [
+                    manifest.title,
+                    manifest.loadReference,
+                    dateFormatter.string(from: manifest.createdAt),
+                    item.modelNumber,
+                    item.productName,
+                    item.condition.displayLabel,
+                    decimalString(item.msrp),
+                    decimalString(item.ourPrice)
+                ]
+            }
+        }
+
+        let msrpTotal = manifest.items.reduce(Decimal(0)) { $0 + $1.msrp * Decimal($1.quantity) }
+        let ourPriceTotal = manifest.items.reduce(Decimal(0)) { $0 + $1.ourPrice * Decimal($1.quantity) }
+
+        let blankRow = Array(repeating: "", count: header.count)
+        let totalRow = [
+            "TOTALS", "", "", "", "", "",
+            decimalString(msrpTotal),
+            decimalString(ourPriceTotal)
+        ]
+
+        let csv = ([header] + rows + [blankRow, totalRow])
             .map { $0.map(Self.escapeCSVField).joined(separator: ",") }
             .joined(separator: "\n")
 
