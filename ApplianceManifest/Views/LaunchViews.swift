@@ -6,7 +6,7 @@ import UIKit
 
 struct MembershipView: View {
     @EnvironmentObject private var appViewModel: AppViewModel
-    @StateObject private var subscriptionService = SubscriptionService()
+    @EnvironmentObject private var subscriptionService: SubscriptionService
     @State private var isPurchasing = false
     @State private var purchasingPlanID: LoadScanPlanID?
     @State private var isOpeningManageSubscriptions = false
@@ -36,10 +36,8 @@ struct MembershipView: View {
         .navigationTitle("Membership")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            subscriptionService.backend = appViewModel.backend
             await subscriptionService.loadProducts()
             await appViewModel.refreshEntitlement()
-            subscriptionService.appAccountToken = appViewModel.entitlement?.orgID ?? appViewModel.session?.user.orgID
             if appViewModel.entitlement?.isEnterprise == true {
                 await appViewModel.loadOrgMembers()
                 await appViewModel.loadInviteCodes()

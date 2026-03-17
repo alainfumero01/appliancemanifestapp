@@ -7,10 +7,28 @@ final class SubscriptionService: ObservableObject {
 
     var appAccountToken: UUID?
     var backend: (any BackendServicing)?
+    var onTransaction: ((PurchaseResult) async -> Void)?
+
+    private var updatesTask: Task<Void, Never>?
 
     private let productIDs = LoadScanPlanID.allCases
         .filter { $0 != .free }
         .map(\.rawValue)
+
+    deinit {
+        updatesTask?.cancel()
+    }
+
+    func startListeningForTransactions() {
+        guard updatesTask == nil else { return }
+
+        updatesTask = Task { [weak self] in
+            for await verification in Transaction.updates {
+                guard !Task.isCancelled else { break }
+                await self?.handleTransactionUpdate(verification)
+            }
+        }
+    }
 
     func loadProducts() async {
         do {
@@ -47,12 +65,7 @@ final class SubscriptionService: ObservableObject {
         case .success(let verification):
             switch verification {
             case .verified(let transaction):
-                await transaction.finish()
-                await backend?.sendSubscriptionEmail(plan: plan.rawValue)
-                // Xcode Cloud can lag local SDK symbol exposure for signed JWS helpers.
-                // The backend accepts a nil JWS and can still activate by product ID,
-                // while App Store Server Notifications handle the fully verified path.
-                return PurchaseResult(productID: product.id, transactionJWS: nil)
+                return await handleVerifiedTransaction(transaction, sendEmail: true, finish: true)
             case .unverified:
                 throw AppError.lookupFailed("Purchase could not be verified by StoreKit.")
             }
@@ -67,6 +80,30 @@ final class SubscriptionService: ObservableObject {
 
     func restorePurchases() async throws {
         try await AppStore.sync()
+    }
+
+    private func handleTransactionUpdate(_ verification: VerificationResult<Transaction>) async {
+        guard case .verified(let transaction) = verification else { return }
+        _ = await handleVerifiedTransaction(transaction, sendEmail: true, finish: true)
+    }
+
+    private func handleVerifiedTransaction(
+        _ transaction: Transaction,
+        sendEmail: Bool,
+        finish: Bool
+    ) async -> PurchaseResult {
+        let result = PurchaseResult(productID: transaction.productID, transactionJWS: nil)
+
+        if sendEmail {
+            await backend?.sendSubscriptionEmail(plan: transaction.productID)
+        }
+        await onTransaction?(result)
+
+        if finish {
+            await transaction.finish()
+        }
+
+        return result
     }
 }
 
