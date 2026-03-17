@@ -77,7 +77,7 @@ Deno.serve(async (request) => {
   }
 
   // Enforce seat limit
-  const { data: org } = await admin
+  const { data: orgForSeatCheck } = await admin
     .from("organizations")
     .select("seat_limit")
     .eq("id", invite.org_id)
@@ -88,7 +88,7 @@ Deno.serve(async (request) => {
     .select("user_id", { count: "exact", head: true })
     .eq("org_id", invite.org_id);
 
-  if (org && org.seat_limit !== null && (currentMemberCount ?? 0) >= org.seat_limit) {
+  if (orgForSeatCheck && orgForSeatCheck.seat_limit !== null && (currentMemberCount ?? 0) >= orgForSeatCheck.seat_limit) {
     return new Response(JSON.stringify({ error: "This organization has reached its seat limit." }), {
       status: 403, headers: { "Content-Type": "application/json" },
     });
