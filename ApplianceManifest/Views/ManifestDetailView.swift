@@ -5,6 +5,7 @@ struct ManifestDetailView: View {
     let manifestID: UUID
     @State private var exportedManifest: ExportedManifest?
     @State private var editingItem: ManifestItem?
+    @State private var isPresentingAddItems = false
     @FocusState private var editingField: Field?
 
     private enum Field {
@@ -37,6 +38,13 @@ struct ManifestDetailView: View {
                                 .buttonStyle(EnterpriseSecondaryButtonStyle())
                         }
                         HStack(spacing: 10) {
+                            if manifest.wrappedValue.status == .draft {
+                                Button("Add Items") {
+                                    editingField = nil
+                                    isPresentingAddItems = true
+                                }
+                                .buttonStyle(EnterpriseSecondaryButtonStyle())
+                            }
                             Button("Export") {
                                 editingField = nil
                                 Task {
@@ -65,6 +73,14 @@ struct ManifestDetailView: View {
                     ItemEditView(item: item) { updated in
                         await appViewModel.updateItem(updated, in: manifest.wrappedValue)
                     }
+                }
+                .sheet(isPresented: $isPresentingAddItems) {
+                    NewManifestView(
+                        isPresented: $isPresentingAddItems,
+                        backend: appViewModel.backend,
+                        existingManifest: manifest.wrappedValue
+                    )
+                    .environmentObject(appViewModel)
                 }
             } else {
                 ContentUnavailableView("Load not found", systemImage: "tray")

@@ -15,6 +15,7 @@ protocol BackendServicing {
     func syncAppStoreSubscription(productID: String, transactionJWS: String?) async throws -> OrganizationEntitlement
     func fetchManifests() async throws -> [Manifest]
     func createManifest(title: String, loadReference: String, draftItems: [DraftManifestItem], loadCost: Decimal?, targetMarginPct: Decimal?) async throws -> Manifest
+    func appendItems(_ draftItems: [DraftManifestItem], to manifest: Manifest) async throws -> Manifest
     func updateManifest(_ manifest: Manifest) async throws -> Manifest
     func deleteManifest(_ manifest: Manifest) async throws
     func deleteAllManifests() async throws
@@ -261,10 +262,12 @@ final class SupabaseBackendService: BackendServicing {
         }
 
         let session = try await requireSession()
+        var headers = anonBearerHeaders
+        headers["X-User-Token"] = session.accessToken
         return try await httpClient.send(
             to: environment.functionsURL.appending(path: "sync-app-store-subscription"),
             method: "POST",
-            headers: authenticatedHeaders(token: session.accessToken, prefer: nil),
+            headers: headers,
             body: RequestBody(productID: productID, transactionJWS: transactionJWS)
         )
     }
@@ -318,8 +321,6 @@ final class SupabaseBackendService: BackendServicing {
         }
         let manifestID = UUID()
         let now = Date()
-        var uploadedPhotoPaths: [String] = []
-
         let manifestInsert = ManifestInsert(
             id: manifestID,
             title: title,
@@ -344,64 +345,12 @@ final class SupabaseBackendService: BackendServicing {
                 throw AppError.lookupFailed("We couldn't save this load right now. Please try again.")
             }
 
-            var createdItems: [ManifestItem] = []
-            for draft in draftItems {
-                let normalized = ModelNumberNormalizer.normalize(draft.modelNumber)
-                let suggestion = LookupSuggestion(
-                    normalizedModelNumber: normalized,
-                    productName: draft.productName,
-                    msrp: Decimal(string: draft.msrpText) ?? 0,
-                    source: draft.source.isEmpty ? "operator-confirmed" : draft.source,
-                    confidence: draft.confidence,
-                    status: .confirmed
-                )
-
-                // Best-effort catalog cache write — non-fatal if edge function isn't deployed.
-                try? await confirmProduct(suggestion)
-
-                let photoPath: String?
-                if draft.imageData.isEmpty {
-                    photoPath = nil
-                } else {
-                    do {
-                        let path = try await uploadPhoto(data: draft.imageData, manifestID: manifestID, itemID: draft.id)
-                        uploadedPhotoPaths.append(path)
-                        photoPath = path
-                    } catch {
-                        throw AppError.lookupFailed("We couldn't upload one of the item photos. Please try again.")
-                    }
-                }
-
-                let insert = ManifestItemInsert(
-                    id: draft.id,
-                    manifest_id: manifestID,
-                    model_number: normalized,
-                    product_name: draft.productName,
-                    msrp: Decimal(string: draft.msrpText) ?? 0,
-                    our_price: Decimal(string: draft.ourPriceText) ?? 0,
-                    condition: draft.condition.rawValue,
-                    quantity: draft.quantity,
-                    photo_path: photoPath,
-                    lookup_status: LookupStatus.confirmed.rawValue,
-                    created_at: now
-                )
-
-                let records: [ManifestItemRecord]
-                do {
-                    records = try await httpClient.send(
-                        to: environment.supabaseURL.appending(path: "rest/v1/manifest_items"),
-                        method: "POST",
-                        headers: authenticatedHeaders(token: session.accessToken, prefer: "return=representation"),
-                        body: [insert]
-                    )
-                } catch {
-                    throw AppError.lookupFailed("We couldn't save one of the items in this load. Please try again.")
-                }
-
-                if let item = records.first?.makeManifestItem() {
-                    createdItems.append(item)
-                }
-            }
+            let createdItems = try await insertManifestItems(
+                draftItems,
+                into: manifestID,
+                createdAt: now,
+                token: session.accessToken
+            )
 
             if entitlement.subscriptionStatus != .active {
                 try? await recordManifestSaveUsage()
@@ -421,12 +370,46 @@ final class SupabaseBackendService: BackendServicing {
                 targetMarginPct: targetMarginPct
             )
         } catch {
-            if !uploadedPhotoPaths.isEmpty {
-                try? await deletePhotos(at: uploadedPhotoPaths, token: session.accessToken)
-            }
             try? await deleteManifestByID(manifestID, token: session.accessToken)
             throw error
         }
+    }
+
+    func appendItems(_ draftItems: [DraftManifestItem], to manifest: Manifest) async throws -> Manifest {
+        guard !draftItems.isEmpty else { return manifest }
+
+        let session = try await requireSession()
+        let now = Date()
+        let createdItems = try await insertManifestItems(
+            draftItems,
+            into: manifest.id,
+            createdAt: now,
+            token: session.accessToken
+        )
+
+        let update = ManifestUpdate(
+            title: manifest.title,
+            load_reference: manifest.loadReference,
+            status: manifest.status.rawValue,
+            updated_at: now
+        )
+
+        let url = environment.supabaseURL
+            .appending(path: "rest/v1/manifests")
+            .appending(queryItems: [URLQueryItem(name: "id", value: "eq.\(manifest.id.uuidString)")])
+
+        _ = try await httpClient.send(
+            to: url,
+            method: "PATCH",
+            headers: authenticatedHeaders(token: session.accessToken, prefer: "return=representation"),
+            body: update
+        ) as [ManifestRecord]
+
+        var copy = manifest
+        copy.updatedAt = now
+        copy.items.append(contentsOf: createdItems)
+        copy.items.sort(by: { $0.createdAt < $1.createdAt })
+        return copy
     }
 
     func updateManifest(_ manifest: Manifest) async throws -> Manifest {
@@ -508,6 +491,82 @@ final class SupabaseBackendService: BackendServicing {
             headers: anonBearerHeaders,
             body: IngestRequest(imageBase64: smallData.base64EncodedString())
         )
+    }
+
+    private func insertManifestItems(
+        _ draftItems: [DraftManifestItem],
+        into manifestID: UUID,
+        createdAt: Date,
+        token: String
+    ) async throws -> [ManifestItem] {
+        var createdItems: [ManifestItem] = []
+        var uploadedPhotoPaths: [String] = []
+
+        do {
+            for draft in draftItems {
+                let normalized = ModelNumberNormalizer.normalize(draft.modelNumber)
+                let suggestion = LookupSuggestion(
+                    normalizedModelNumber: normalized,
+                    productName: draft.productName,
+                    msrp: Decimal(string: draft.msrpText) ?? 0,
+                    source: draft.source.isEmpty ? "operator-confirmed" : draft.source,
+                    confidence: draft.confidence,
+                    status: .confirmed
+                )
+
+                try? await confirmProduct(suggestion)
+
+                let photoPath: String?
+                if draft.imageData.isEmpty {
+                    photoPath = nil
+                } else {
+                    do {
+                        let path = try await uploadPhoto(data: draft.imageData, manifestID: manifestID, itemID: draft.id)
+                        uploadedPhotoPaths.append(path)
+                        photoPath = path
+                    } catch {
+                        throw AppError.lookupFailed("We couldn't upload one of the item photos. Please try again.")
+                    }
+                }
+
+                let insert = ManifestItemInsert(
+                    id: draft.id,
+                    manifest_id: manifestID,
+                    model_number: normalized,
+                    product_name: draft.productName,
+                    msrp: Decimal(string: draft.msrpText) ?? 0,
+                    our_price: Decimal(string: draft.ourPriceText) ?? 0,
+                    condition: draft.condition.rawValue,
+                    quantity: draft.quantity,
+                    photo_path: photoPath,
+                    lookup_status: LookupStatus.confirmed.rawValue,
+                    created_at: createdAt
+                )
+
+                let records: [ManifestItemRecord]
+                do {
+                    records = try await httpClient.send(
+                        to: environment.supabaseURL.appending(path: "rest/v1/manifest_items"),
+                        method: "POST",
+                        headers: authenticatedHeaders(token: token, prefer: "return=representation"),
+                        body: [insert]
+                    )
+                } catch {
+                    throw AppError.lookupFailed("We couldn't save one of the items in this load. Please try again.")
+                }
+
+                if let item = records.first?.makeManifestItem() {
+                    createdItems.append(item)
+                }
+            }
+
+            return createdItems
+        } catch {
+            if !uploadedPhotoPaths.isEmpty {
+                try? await deletePhotos(at: uploadedPhotoPaths, token: token)
+            }
+            throw error
+        }
     }
 
     func extractModelNumber(from imageData: Data) async throws -> String {

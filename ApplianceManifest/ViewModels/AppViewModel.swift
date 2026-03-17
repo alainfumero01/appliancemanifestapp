@@ -148,6 +148,19 @@ final class AppViewModel: ObservableObject {
         try await backend.sendPasswordReset(email: email)
     }
 
+    func appendDraftItems(_ draftItems: [DraftManifestItem], to manifest: Manifest) async -> Bool {
+        do {
+            let updated = try await backend.appendItems(draftItems, to: manifest)
+            if let index = manifests.firstIndex(where: { $0.id == updated.id }) {
+                manifests[index] = updated
+            }
+            return true
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
     func syncSubscription(productID: String, transactionJWS: String?) async {
         do {
             entitlement = try await backend.syncAppStoreSubscription(productID: productID, transactionJWS: transactionJWS)
@@ -287,6 +300,7 @@ final class PreviewBackendService: BackendServicing {
     func syncAppStoreSubscription(productID: String, transactionJWS: String?) async throws -> OrganizationEntitlement { throw AppError.lookupFailed("Configure StoreKit sync before launch.") }
     func fetchManifests() async throws -> [Manifest] { [] }
     func createManifest(title: String, loadReference: String, draftItems: [DraftManifestItem], loadCost: Decimal?, targetMarginPct: Decimal?) async throws -> Manifest { throw AppError.lookupFailed("Configure Supabase before creating manifests.") }
+    func appendItems(_ draftItems: [DraftManifestItem], to manifest: Manifest) async throws -> Manifest { manifest }
     func updateManifest(_ manifest: Manifest) async throws -> Manifest { manifest }
     func deleteManifest(_ manifest: Manifest) async throws {}
     func deleteAllManifests() async throws {}

@@ -11,7 +11,8 @@ Deno.serve(async (request) => {
     return new Response("Method not allowed", { status: 405 });
   }
 
-  const token = (request.headers.get("Authorization") ?? "").replace("Bearer ", "").trim();
+  const token = request.headers.get("X-User-Token")?.trim()
+    || (request.headers.get("Authorization") ?? "").replace("Bearer ", "").trim();
   if (!token) return unauthorized();
 
   const body = await request.json();

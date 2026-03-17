@@ -10,30 +10,37 @@ struct NewManifestView: View {
     @State private var isChoosingPhotoSource = false
     @State private var showNotApplianceToast = false
     @FocusState private var focusedField: Field?
+    private let existingManifest: Manifest?
 
     private enum Field {
         case title, loadReference, loadCost, margin, manualModel
     }
 
-    init(isPresented: Binding<Bool>, backend: BackendServicing) {
+    init(isPresented: Binding<Bool>, backend: BackendServicing, existingManifest: Manifest? = nil) {
         _isPresented = isPresented
-        _viewModel = StateObject(wrappedValue: NewManifestViewModel(backend: backend))
+        let viewModel = NewManifestViewModel(backend: backend)
+        if let existingManifest {
+            viewModel.title = existingManifest.title
+            viewModel.loadReference = existingManifest.loadReference
+        }
+        _viewModel = StateObject(wrappedValue: viewModel)
+        self.existingManifest = existingManifest
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    infoCard
+                    if existingManifest == nil { infoCard }
                     scanCard
-                    pricingCard
+                    if existingManifest == nil { pricingCard }
                     queueSection
                 }
                 .padding(.horizontal, EnterpriseTheme.pagePadding)
                 .padding(.top, 20)
                 .padding(.bottom, 140)
             }
-            .navigationTitle("New Load")
+            .navigationTitle(existingManifest == nil ? "New Load" : "Add Items")
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom) {
@@ -42,25 +49,33 @@ struct NewManifestView: View {
                         Button("Dismiss Keyboard") { focusedField = nil }
                             .buttonStyle(EnterpriseSecondaryButtonStyle())
                     }
-                    Button("Save Manifest") {
+                    Button(existingManifest == nil ? "Save Manifest" : "Add to Draft") {
                         focusedField = nil
                         Task {
                             viewModel.isSaving = true
                             defer { viewModel.isSaving = false }
-                            var loadCost: Decimal? = nil
-                            var targetMarginPct: Decimal? = nil
-                            if viewModel.pricingMode == .loadBased {
-                                viewModel.applyLoadBasedPricing()
-                                loadCost = Decimal(string: viewModel.loadCostText)
-                                targetMarginPct = Decimal(string: viewModel.targetMarginText)
+                            let didSave: Bool
+                            if let existingManifest {
+                                didSave = await appViewModel.appendDraftItems(
+                                    viewModel.draftItems,
+                                    to: existingManifest
+                                )
+                            } else {
+                                var loadCost: Decimal? = nil
+                                var targetMarginPct: Decimal? = nil
+                                if viewModel.pricingMode == .loadBased {
+                                    viewModel.applyLoadBasedPricing()
+                                    loadCost = Decimal(string: viewModel.loadCostText)
+                                    targetMarginPct = Decimal(string: viewModel.targetMarginText)
+                                }
+                                didSave = await appViewModel.addManifest(
+                                    title: viewModel.title,
+                                    loadReference: viewModel.resolvedLoadReference,
+                                    items: viewModel.draftItems,
+                                    loadCost: loadCost,
+                                    targetMarginPct: targetMarginPct
+                                )
                             }
-                            let didSave = await appViewModel.addManifest(
-                                title: viewModel.title,
-                                loadReference: viewModel.resolvedLoadReference,
-                                items: viewModel.draftItems,
-                                loadCost: loadCost,
-                                targetMarginPct: targetMarginPct
-                            )
                             if didSave { isPresented = false }
                         }
                     }
@@ -211,10 +226,12 @@ struct NewManifestView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Add Items")
+                    Text(existingManifest == nil ? "Add Items" : "Add More Items")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(EnterpriseTheme.textPrimary)
-                    Text("Photograph a sticker or type a model number to look it up.")
+                    Text(existingManifest == nil
+                        ? "Photograph a sticker or type a model number to look it up."
+                        : "Scan more stickers or type model numbers to add them to this draft load.")
                         .font(.caption)
                         .foregroundStyle(EnterpriseTheme.textSecondary)
                 }
