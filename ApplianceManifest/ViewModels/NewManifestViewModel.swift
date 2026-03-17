@@ -60,6 +60,12 @@ final class NewManifestViewModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 600_000_000)
             notApplianceDetected = true
         } catch {
+            if error.isNotApplianceIssue {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                notApplianceDetected = true
+                return
+            }
+
             let msg = error.userMessage
             print("❌ ingestPhoto error: \(error)")
             let fallback = DraftManifestItem(imageData: data, lookupStatus: .needsReview)

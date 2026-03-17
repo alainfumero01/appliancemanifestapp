@@ -23,7 +23,7 @@ struct MembershipView: View {
             VStack(spacing: 20) {
                 accountHeader
                 planStatusCard
-                if needsUpgrade { plansSection }
+                plansSection
                 if isEnterpriseOwner { teamSection }
                 if isEnterpriseOwner { inviteCodesSection }
                 accountFooter
@@ -45,13 +45,14 @@ struct MembershipView: View {
         }
     }
 
-    private var needsUpgrade: Bool {
-        appViewModel.entitlement?.subscriptionStatus != .active
-    }
-
     private var isEnterpriseOwner: Bool {
         appViewModel.entitlement?.isEnterprise == true &&
         appViewModel.entitlement?.isOwner == true
+    }
+
+    private var currentPlan: LoadScanPlanID? {
+        guard appViewModel.entitlement?.subscriptionStatus == .active else { return nil }
+        return appViewModel.entitlement?.currentPlan
     }
 
     // MARK: - Account Header
@@ -146,6 +147,10 @@ struct MembershipView: View {
                     planStat(label: "Renews", value: Formatters.mediumDate.string(from: expiry))
                 }
             }
+
+            Text("Need a different plan? You can switch tiers below at any time.")
+                .font(.system(size: 12))
+                .foregroundStyle(EnterpriseTheme.textSecondary)
         }
         .padding(18)
         .background(Color.white)
@@ -213,7 +218,7 @@ struct MembershipView: View {
 
     private var plansSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("CHOOSE A PLAN")
+            sectionLabel(currentPlan == nil ? "CHOOSE A PLAN" : "CHANGE PLAN")
 
             ForEach(upgradeablePlans) { plan in
                 planCard(plan)
@@ -286,12 +291,29 @@ struct MembershipView: View {
         let isEnterprise = plan.isEnterprise
         let accentColor = isEnterprise ? EnterpriseTheme.warning : EnterpriseTheme.accent
         let isPurchasingThis = purchasingPlanID == plan
+        let isCurrentPlan = currentPlan == plan
+        let buttonTitle: String = {
+            if isCurrentPlan { return "Current Plan" }
+            return currentPlan == nil ? "Subscribe" : "Switch Plan"
+        }()
 
         return HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
-                Text(plan.displayName)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(EnterpriseTheme.textPrimary)
+                HStack(spacing: 8) {
+                    Text(plan.displayName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(EnterpriseTheme.textPrimary)
+
+                    if isCurrentPlan {
+                        Text("Current")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(EnterpriseTheme.success)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(EnterpriseTheme.success.opacity(0.1))
+                            .clipShape(Capsule())
+                    }
+                }
                 Text(plan.marketingDescription)
                     .font(.system(size: 12))
                     .foregroundStyle(EnterpriseTheme.textSecondary)
@@ -312,16 +334,16 @@ struct MembershipView: View {
                         if isPurchasingThis {
                             ProgressView().tint(.white).scaleEffect(0.75)
                         } else {
-                            Text("Subscribe")
+                            Text(buttonTitle)
                         }
                     }
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: 86, height: 32)
-                    .background(accentColor)
+                    .frame(width: 96, height: 32)
+                    .background(isCurrentPlan ? EnterpriseTheme.textTertiary : accentColor)
                     .clipShape(Capsule())
                 }
-                .disabled(isPurchasing)
+                .disabled(isPurchasing || isCurrentPlan)
             }
         }
         .padding(16)
@@ -329,7 +351,11 @@ struct MembershipView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(accentColor.opacity(isEnterprise ? 0.25 : 0.15), lineWidth: 1)
+                .stroke(
+                    (isCurrentPlan ? EnterpriseTheme.success : accentColor)
+                        .opacity(isCurrentPlan ? 0.25 : (isEnterprise ? 0.25 : 0.15)),
+                    lineWidth: 1
+                )
         }
         .shadow(color: EnterpriseTheme.shadow, radius: 3, x: 0, y: 1)
     }
@@ -544,6 +570,7 @@ struct MembershipView: View {
                 await appViewModel.loadInviteCodes()
             }
         } catch {
+            guard !error.isExpectedCancellation else { return }
             appViewModel.errorMessage = error.userMessage
         }
     }
@@ -562,6 +589,7 @@ struct MembershipView: View {
         do {
             try await AppStore.showManageSubscriptions(in: scene)
         } catch {
+            guard !error.isExpectedCancellation else { return }
             appViewModel.errorMessage = error.userMessage
         }
     }

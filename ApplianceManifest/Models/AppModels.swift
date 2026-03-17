@@ -557,4 +557,24 @@ extension Error {
     var userMessage: String {
         UserFacingError.message(for: self)
     }
+
+    var isExpectedCancellation: Bool {
+        if self is CancellationError {
+            return true
+        }
+
+        if let urlError = self as? URLError, urlError.code == .cancelled {
+            return true
+        }
+
+        return false
+    }
+
+    var isNotApplianceIssue: Bool {
+        if let appError = self as? AppError, appError == .notAppliance {
+            return true
+        }
+
+        return userMessage == AppError.notAppliance.errorDescription
+    }
 }

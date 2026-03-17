@@ -269,6 +269,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func present(_ error: Error) {
+        guard !error.isExpectedCancellation else { return }
         errorMessage = error.userMessage
     }
 }
