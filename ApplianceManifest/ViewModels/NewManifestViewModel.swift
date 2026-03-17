@@ -60,7 +60,7 @@ final class NewManifestViewModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 600_000_000)
             notApplianceDetected = true
         } catch {
-            let msg = error.localizedDescription
+            let msg = error.userMessage
             print("❌ ingestPhoto error: \(error)")
             let fallback = DraftManifestItem(imageData: data, lookupStatus: .needsReview)
             draftItems.append(fallback)
@@ -93,7 +93,7 @@ final class NewManifestViewModel: ObservableObject {
         do {
             try await backend.confirmProduct(suggestion)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.userMessage
         }
     }
 
@@ -132,7 +132,7 @@ final class NewManifestViewModel: ObservableObject {
             manualModelNumber = ""
         } catch {
             try? await Task.sleep(nanoseconds: 500_000_000)
-            errorMessage = error.localizedDescription
+            errorMessage = error.userMessage
         }
     }
 

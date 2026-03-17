@@ -28,6 +28,10 @@ final class SubscriptionService: ObservableObject {
     }
 
     func purchase(plan: LoadScanPlanID) async throws -> PurchaseResult {
+        guard AppStore.canMakePayments else {
+            throw AppError.lookupFailed("In-App Purchases are not available on this device right now.")
+        }
+
         guard let product = product(for: plan) else {
             throw AppError.lookupFailed("Subscription product is not available yet. Configure it in App Store Connect.")
         }
@@ -53,7 +57,7 @@ final class SubscriptionService: ObservableObject {
                 throw AppError.lookupFailed("Purchase could not be verified by StoreKit.")
             }
         case .userCancelled:
-            throw AppError.lookupFailed("Purchase was canceled.")
+            throw CancellationError()
         case .pending:
             throw AppError.lookupFailed("Purchase is pending approval.")
         @unknown default:

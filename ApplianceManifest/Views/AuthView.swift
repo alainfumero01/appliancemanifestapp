@@ -335,7 +335,7 @@ struct AuthView: View {
             }
         case .failure(let error):
             if (error as? ASAuthorizationError)?.code != .canceled {
-                appViewModel.errorMessage = error.localizedDescription
+                appViewModel.errorMessage = error.userMessage
             }
         }
     }

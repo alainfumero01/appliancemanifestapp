@@ -341,7 +341,7 @@ final class SupabaseBackendService: BackendServicing {
                     body: [manifestInsert]
                 ) as [ManifestRecord]
             } catch {
-                throw AppError.lookupFailed("Manifest insert failed: \(error.localizedDescription)")
+                throw AppError.lookupFailed("We couldn't save this load right now. Please try again.")
             }
 
             var createdItems: [ManifestItem] = []
@@ -368,7 +368,7 @@ final class SupabaseBackendService: BackendServicing {
                         uploadedPhotoPaths.append(path)
                         photoPath = path
                     } catch {
-                        throw AppError.lookupFailed("Photo upload failed for \(normalized): \(error.localizedDescription)")
+                        throw AppError.lookupFailed("We couldn't upload one of the item photos. Please try again.")
                     }
                 }
 
@@ -395,7 +395,7 @@ final class SupabaseBackendService: BackendServicing {
                         body: [insert]
                     )
                 } catch {
-                    throw AppError.lookupFailed("Manifest item insert failed for \(normalized): \(error.localizedDescription)")
+                    throw AppError.lookupFailed("We couldn't save one of the items in this load. Please try again.")
                 }
 
                 if let item = records.first?.makeManifestItem() {

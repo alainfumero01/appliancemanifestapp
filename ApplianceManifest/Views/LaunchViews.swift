@@ -1,5 +1,6 @@
 import StoreKit
 import SwiftUI
+import UIKit
 
 // MARK: - Membership Tab
 
@@ -8,6 +9,7 @@ struct MembershipView: View {
     @StateObject private var subscriptionService = SubscriptionService()
     @State private var isPurchasing = false
     @State private var purchasingPlanID: LoadScanPlanID?
+    @State private var isOpeningManageSubscriptions = false
 
     private let upgradeablePlans: [LoadScanPlanID] = [
         .individualMonthly,
@@ -38,6 +40,10 @@ struct MembershipView: View {
             await subscriptionService.loadProducts()
             await appViewModel.refreshEntitlement()
             subscriptionService.appAccountToken = appViewModel.entitlement?.orgID ?? appViewModel.session?.user.orgID
+            if appViewModel.entitlement?.isEnterprise == true {
+                await appViewModel.loadOrgMembers()
+                await appViewModel.loadInviteCodes()
+            }
         }
     }
 
@@ -215,6 +221,8 @@ struct MembershipView: View {
                 planCard(plan)
             }
 
+            purchaseHelpCard
+
             Button {
                 Task { await restorePurchases() }
             } label: {
@@ -230,6 +238,49 @@ struct MembershipView: View {
                             .stroke(EnterpriseTheme.border, lineWidth: 1)
                     }
             }
+
+            Button {
+                Task { await manageSubscriptions() }
+            } label: {
+                if isOpeningManageSubscriptions {
+                    ProgressView()
+                        .tint(EnterpriseTheme.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                } else {
+                    Text("Manage App Store Subscriptions")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(EnterpriseTheme.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+            }
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(EnterpriseTheme.border, lineWidth: 1)
+            }
+            .disabled(isOpeningManageSubscriptions)
+        }
+    }
+
+    private var purchaseHelpCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Subscriptions are billed through the App Store.")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(EnterpriseTheme.textPrimary)
+            Text("Apple uses the App Store account signed into Media & Purchases on this device. If Apple asks for a password, that's the App Store account confirmation step, not your LoadScan login.")
+                .font(.system(size: 12))
+                .foregroundStyle(EnterpriseTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(EnterpriseTheme.border, lineWidth: 1)
         }
     }
 
@@ -479,8 +530,10 @@ struct MembershipView: View {
         do {
             let result = try await subscriptionService.purchase(plan: plan)
             await appViewModel.syncSubscription(productID: result.productID, transactionJWS: result.transactionJWS)
+        } catch is CancellationError {
+            // Closing Apple's purchase sheet is an expected user action.
         } catch {
-            appViewModel.errorMessage = error.localizedDescription
+            appViewModel.errorMessage = error.userMessage
         }
     }
 
@@ -488,8 +541,30 @@ struct MembershipView: View {
         do {
             try await subscriptionService.restorePurchases()
             await appViewModel.refreshEntitlement()
+            if appViewModel.entitlement?.isEnterprise == true {
+                await appViewModel.loadOrgMembers()
+                await appViewModel.loadInviteCodes()
+            }
         } catch {
-            appViewModel.errorMessage = error.localizedDescription
+            appViewModel.errorMessage = error.userMessage
+        }
+    }
+
+    private func manageSubscriptions() async {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first else {
+            appViewModel.errorMessage = "We couldn't open App Store subscriptions right now."
+            return
+        }
+
+        isOpeningManageSubscriptions = true
+        defer { isOpeningManageSubscriptions = false }
+
+        do {
+            try await AppStore.showManageSubscriptions(in: scene)
+        } catch {
+            appViewModel.errorMessage = error.userMessage
         }
     }
 }

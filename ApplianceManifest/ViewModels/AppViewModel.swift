@@ -24,8 +24,8 @@ final class AppViewModel: ObservableObject {
                 let environment = try AppEnvironment()
                 self.backend = SupabaseBackendService(environment: environment)
             } catch {
-                self.backend = PreviewBackendService(error: error.localizedDescription)
-                self.errorMessage = error.localizedDescription
+                self.backend = PreviewBackendService(error: error.userMessage)
+                self.errorMessage = error.userMessage
             }
         }
     }
@@ -94,7 +94,7 @@ final class AppViewModel: ObservableObject {
         do {
             entitlement = try await backend.fetchEntitlement()
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
         }
     }
 
@@ -102,7 +102,7 @@ final class AppViewModel: ObservableObject {
         do {
             orgMembers = try await backend.listOrgMembers()
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
         }
     }
 
@@ -114,7 +114,7 @@ final class AppViewModel: ObservableObject {
             await loadOrgMembers()
             await refreshEntitlement()
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
         }
     }
 
@@ -124,7 +124,7 @@ final class AppViewModel: ObservableObject {
             orgMembers.removeAll { $0.id == member.id }
             await refreshEntitlement()
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
         }
     }
 
@@ -153,8 +153,11 @@ final class AppViewModel: ObservableObject {
             entitlement = try await backend.syncAppStoreSubscription(productID: productID, transactionJWS: transactionJWS)
             await refreshManifests()
             await loadInviteCodes()
+            if entitlement?.isEnterprise == true {
+                await loadOrgMembers()
+            }
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
         }
     }
 
@@ -168,7 +171,7 @@ final class AppViewModel: ObservableObject {
         } catch let urlError as URLError where urlError.code == .cancelled {
             // URLSession cancellation from pull-to-refresh — not a real error.
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
         }
     }
 
@@ -181,7 +184,7 @@ final class AppViewModel: ObservableObject {
             await refreshEntitlement()
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
             return false
         }
     }
@@ -193,7 +196,7 @@ final class AppViewModel: ObservableObject {
                 manifests[index] = updated
             }
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
         }
     }
 
@@ -202,7 +205,7 @@ final class AppViewModel: ObservableObject {
             try await backend.deleteManifest(manifest)
             manifests.removeAll { $0.id == manifest.id }
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
         }
     }
 
@@ -211,7 +214,7 @@ final class AppViewModel: ObservableObject {
             try await backend.deleteAllManifests()
             manifests = []
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
         }
     }
 
@@ -222,7 +225,7 @@ final class AppViewModel: ObservableObject {
                 manifests[index] = updated
             }
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
         }
     }
 
@@ -233,7 +236,7 @@ final class AppViewModel: ObservableObject {
                 manifests[index] = updated
             }
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
         }
     }
 
@@ -248,8 +251,12 @@ final class AppViewModel: ObservableObject {
             await refreshEntitlement()
             await refreshManifests()
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
         }
+    }
+
+    private func present(_ error: Error) {
+        errorMessage = error.userMessage
     }
 }
 

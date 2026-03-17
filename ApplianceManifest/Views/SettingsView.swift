@@ -116,11 +116,18 @@ struct SettingsView: View {
                 action: {
                     guard !isSendingPasswordReset,
                           let email = appViewModel.session?.user.email else { return }
+                    appViewModel.errorMessage = nil
                     isSendingPasswordReset = true
                     Task {
-                        try? await appViewModel.sendPasswordReset(email: email)
+                        do {
+                            try await appViewModel.sendPasswordReset(email: email)
+                        } catch {
+                            appViewModel.errorMessage = error.userMessage
+                        }
                         isSendingPasswordReset = false
-                        showPasswordResetConfirmation = true
+                        if appViewModel.errorMessage == nil {
+                            showPasswordResetConfirmation = true
+                        }
                     }
                 }
             )
@@ -300,7 +307,7 @@ struct SettingsView: View {
                                 inviteCodeInput = ""
                                 showJoinOrgSuccess = true
                             } catch {
-                                joinOrgError = error.localizedDescription
+                                joinOrgError = error.userMessage
                             }
                             isJoiningOrg = false
                         }

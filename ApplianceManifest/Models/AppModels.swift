@@ -350,11 +350,211 @@ enum AppError: LocalizedError, Equatable {
         case .notAppliance:
             return "The scanned sticker is not for an appliance."
         case .lookupFailed(let message):
-            return message
+            return UserFacingError.sanitize(message)
         case .exportFailed:
             return "The manifest could not be exported."
         case .paywallRequired(let message):
             return message
         }
+    }
+}
+
+enum UserFacingError {
+    static func message(for error: Error) -> String {
+        if let appError = error as? AppError {
+            return appError.errorDescription ?? fallbackMessage
+        }
+
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet,
+                 .networkConnectionLost,
+                 .cannotConnectToHost,
+                 .cannotFindHost,
+                 .internationalRoamingOff,
+                 .dataNotAllowed:
+                return "Check your internet connection and try again."
+            case .timedOut:
+                return "That took too long. Please try again."
+            case .cancelled:
+                return "That action was canceled."
+            default:
+                return "We couldn't complete that right now. Please try again."
+            }
+        }
+
+        if error is DecodingError {
+            return "We hit a temporary issue loading your data. Please try again."
+        }
+
+        return sanitize(error.localizedDescription)
+    }
+
+    static func sanitize(_ rawMessage: String) -> String {
+        let extracted = extractMessage(from: rawMessage)
+        let normalized = extracted
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.init(charactersIn: "\"")))
+        guard !normalized.isEmpty else { return fallbackMessage }
+
+        let lowercase = normalized.lowercased()
+
+        if lowercase.contains("invalid login credentials")
+            || lowercase.contains("invalid email or password")
+            || lowercase.contains("wrong password")
+            || lowercase.contains("invalid_credentials") {
+            return "That email or password doesn't look right. Please try again."
+        }
+
+        if lowercase.contains("already registered")
+            || lowercase.contains("already exists")
+            || lowercase.contains("user already registered")
+            || lowercase.contains("account already exists") {
+            return "An account with this email already exists. Try signing in instead."
+        }
+
+        if lowercase.contains("password should be at least")
+            || lowercase.contains("password is too short")
+            || lowercase.contains("weak password") {
+            return "Choose a stronger password with at least 6 characters."
+        }
+
+        if lowercase.contains("invalid email")
+            || lowercase.contains("email address is invalid") {
+            return "Enter a valid email address and try again."
+        }
+
+        if lowercase.contains("rate limit")
+            || lowercase.contains("too many requests")
+            || lowercase.contains("security purposes") {
+            return "Too many attempts were made. Please wait a moment and try again."
+        }
+
+        if lowercase.contains("email not confirmed")
+            || lowercase.contains("confirm your email") {
+            return "Please confirm your email address before signing in."
+        }
+
+        if lowercase.contains("jwt expired")
+            || lowercase.contains("token expired")
+            || lowercase.contains("session expired")
+            || lowercase.contains("unauthorized")
+            || lowercase.contains("invalid jwt")
+            || lowercase.contains("no auth credentials found") {
+            return "Your session expired. Please sign in again."
+        }
+
+        if lowercase.contains("invite")
+            && (lowercase.contains("invalid")
+                || lowercase.contains("expired")
+                || lowercase.contains("used")
+                || lowercase.contains("not found")) {
+            return "That invite code isn't valid anymore. Double-check it and try again."
+        }
+
+        if lowercase.contains("already a member")
+            || lowercase.contains("already belongs to")
+            || lowercase.contains("already in organization") {
+            return "This account is already on a team."
+        }
+
+        if lowercase.contains("only organization owners can create invite")
+            || lowercase.contains("only the owner can create invite") {
+            return "Only the team owner can generate invite codes."
+        }
+
+        if lowercase.contains("no organization found")
+            || lowercase.contains("organization not found") {
+            return "We couldn't find your organization yet. Please try again in a moment."
+        }
+
+        if lowercase.contains("requested function was not found")
+            || lowercase == "not_found"
+            || lowercase.contains("\"code\":\"not_found\"") {
+            return "This feature is still being set up. Please try again shortly."
+        }
+
+        if lowercase.contains("unknown app store product")
+            || lowercase.contains("product is not available")
+            || lowercase.contains("configure it in app store connect") {
+            return "This subscription option isn't available right now. Please try again shortly."
+        }
+
+        if lowercase.contains("in-app purchases are not available on this device") {
+            return "Subscriptions aren't available on this device right now. Check Screen Time or App Store restrictions and try again."
+        }
+
+        if lowercase.contains("transaction product does not match")
+            || lowercase.contains("transaction appaccounttoken does not match")
+            || lowercase.contains("purchase could not be verified") {
+            return "We couldn't verify that purchase. Please try again."
+        }
+
+        if lowercase.contains("purchase was canceled") {
+            return "Purchase canceled."
+        }
+
+        if lowercase.contains("purchase is pending approval") {
+            return "Your purchase is pending approval."
+        }
+
+        if lowercase.contains("unexpected purchase result") {
+            return "We couldn't finish that purchase right now. Please try again."
+        }
+
+        if lowercase.contains("manifest insert failed")
+            || lowercase.contains("manifest item insert failed")
+            || lowercase.contains("photo upload failed") {
+            return "We couldn't save everything for this load. Please try again."
+        }
+
+        if lowercase.contains("failed to fetch")
+            || lowercase.contains("network request failed")
+            || lowercase.contains("fetcherror") {
+            return "We couldn't reach the server right now. Please try again."
+        }
+
+        if normalized.first == "{"
+            || normalized.first == "[" {
+            return fallbackMessage
+        }
+
+        return normalized
+    }
+
+    private static var fallbackMessage: String {
+        "We couldn't complete that right now. Please try again."
+    }
+
+    private static func extractMessage(from rawMessage: String) -> String {
+        guard let data = rawMessage.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) else {
+            return rawMessage
+        }
+
+        if let dictionary = json as? [String: Any] {
+            for key in ["error_description", "error", "message", "msg"] {
+                if let value = dictionary[key] as? String, !value.isEmpty {
+                    return value
+                }
+            }
+        }
+
+        if let array = json as? [[String: Any]] {
+            for item in array {
+                for key in ["error_description", "error", "message", "msg"] {
+                    if let value = item[key] as? String, !value.isEmpty {
+                        return value
+                    }
+                }
+            }
+        }
+
+        return rawMessage
+    }
+}
+
+extension Error {
+    var userMessage: String {
+        UserFacingError.message(for: self)
     }
 }
