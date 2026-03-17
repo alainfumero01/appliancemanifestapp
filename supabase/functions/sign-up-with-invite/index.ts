@@ -89,7 +89,7 @@ Deno.serve(async (request) => {
     const { data, error: inviteError } = await admin
       .from("invite_codes")
       .select("id, is_active, usage_limit, usage_count, org_id")
-      .eq("code", inviteCode)
+      .eq("code", inviteCode.trim().toUpperCase().replace(/\s+/g, ""))
       .maybeSingle();
 
     if (inviteError || !data || !data.is_active) {
