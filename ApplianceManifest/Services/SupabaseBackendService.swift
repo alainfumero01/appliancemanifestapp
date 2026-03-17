@@ -28,6 +28,7 @@ protocol BackendServicing {
     func sendSubscriptionEmail(plan: String) async
     func sendPasswordReset(email: String) async throws
     func joinOrgWithInvite(code: String) async throws -> OrganizationEntitlement
+    func fetchInviteCodes() async throws -> [InviteCode]
 }
 
 final class SupabaseBackendService: BackendServicing {
@@ -629,6 +630,31 @@ final class SupabaseBackendService: BackendServicing {
             headers: headers,
             body: Body(inviteCode: code)
         )
+    }
+
+    func fetchInviteCodes() async throws -> [InviteCode] {
+        let session = try await requireSession()
+        struct Row: Decodable {
+            let id: UUID
+            let code: String
+            let is_active: Bool
+            let usage_count: Int
+            let usage_limit: Int?
+        }
+        let url = environment.supabaseURL
+            .appending(path: "rest/v1/invite_codes")
+            .appending(queryItems: [
+                URLQueryItem(name: "select", value: "id,code,is_active,usage_count,usage_limit"),
+                URLQueryItem(name: "order",  value: "created_at.asc")
+            ])
+        let rows: [Row] = try await httpClient.send(
+            to: url, method: "GET",
+            headers: authenticatedHeaders(token: session.accessToken, prefer: nil)
+        )
+        return rows.map {
+            InviteCode(id: $0.id, code: $0.code, isActive: $0.is_active,
+                       usageCount: $0.usage_count, usageLimit: $0.usage_limit)
+        }
     }
 
     func sendSubscriptionEmail(plan: String) async {

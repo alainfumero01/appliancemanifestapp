@@ -8,6 +8,7 @@ final class AppViewModel: ObservableObject {
     @Published var entitlement: OrganizationEntitlement?
     @Published var orgMembers: [OrganizationMember] = []
     @Published var inviteLink: EnterpriseInviteLink?
+    @Published var inviteCodes: [InviteCode] = []
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var authMode: AuthMode = .signIn
@@ -85,6 +86,7 @@ final class AppViewModel: ObservableObject {
         entitlement = nil
         orgMembers = []
         inviteLink = nil
+        inviteCodes = []
     }
 
     func refreshEntitlement() async {
@@ -124,6 +126,11 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    func loadInviteCodes() async {
+        do { inviteCodes = try await backend.fetchInviteCodes() }
+        catch { /* non-fatal — codes just won't show */ }
+    }
+
     func joinOrgWithInvite(code: String) async throws -> OrganizationEntitlement {
         let result = try await backend.joinOrgWithInvite(code: code)
         entitlement = result
@@ -143,6 +150,7 @@ final class AppViewModel: ObservableObject {
         do {
             entitlement = try await backend.syncAppStoreSubscription(productID: productID, transactionJWS: transactionJWS)
             await refreshManifests()
+            await loadInviteCodes()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -283,4 +291,5 @@ final class PreviewBackendService: BackendServicing {
     func sendSubscriptionEmail(plan: String) async {}
     func sendPasswordReset(email: String) async throws {}
     func joinOrgWithInvite(code: String) async throws -> OrganizationEntitlement { throw AppError.lookupFailed("Not available in preview.") }
+    func fetchInviteCodes() async throws -> [InviteCode] { [] }
 }

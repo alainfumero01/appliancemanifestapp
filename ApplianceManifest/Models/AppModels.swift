@@ -153,6 +153,16 @@ struct EnterpriseInviteLink: Codable, Equatable {
     let currentMemberCount: Int
 }
 
+struct InviteCode: Codable, Identifiable, Equatable {
+    let id: UUID
+    let code: String
+    let isActive: Bool
+    let usageCount: Int
+    let usageLimit: Int?
+
+    var isUsed: Bool { (usageLimit.map { usageCount >= $0 } ?? false) || !isActive }
+}
+
 struct Manifest: Identifiable, Codable, Equatable {
     let id: UUID
     var title: String
