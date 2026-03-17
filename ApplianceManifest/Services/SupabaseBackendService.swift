@@ -270,10 +270,37 @@ final class SupabaseBackendService: BackendServicing {
         let items = try await fetchManifestItems()
         let itemsByManifest = Dictionary(grouping: items, by: \.manifestID)
 
+        // Fetch owner emails for all unique owner IDs so each manifest shows who created it
+        let ownerIDs = Array(Set(records.map { $0.owner_id }))
+        let ownerEmails = (try? await fetchOwnerEmails(ownerIDs, session: session)) ?? [:]
+
         return records.map { record in
-            record.makeManifest(items: itemsByManifest[record.id] ?? [])
+            record.makeManifest(
+                items: itemsByManifest[record.id] ?? [],
+                ownerEmail: ownerEmails[record.owner_id]
+            )
         }
         .sorted(by: { $0.updatedAt > $1.updatedAt })
+    }
+
+    private func fetchOwnerEmails(_ ids: [UUID], session: UserSession) async throws -> [UUID: String] {
+        guard !ids.isEmpty else { return [:] }
+        let idList = ids.map { $0.uuidString }.joined(separator: ",")
+        let url = environment.supabaseURL
+            .appending(path: "rest/v1/profiles")
+            .appending(queryItems: [
+                URLQueryItem(name: "select", value: "id,email"),
+                URLQueryItem(name: "id", value: "in.(\(idList))")
+            ])
+        struct ProfileEmail: Decodable { let id: UUID; let email: String? }
+        let profiles: [ProfileEmail] = try await httpClient.send(
+            to: url, method: "GET",
+            headers: authenticatedHeaders(token: session.accessToken, prefer: nil)
+        )
+        return Dictionary(uniqueKeysWithValues: profiles.compactMap { p in
+            guard let email = p.email else { return nil }
+            return (p.id, email)
+        })
     }
 
     func createManifest(title: String, loadReference: String, draftItems: [DraftManifestItem], loadCost: Decimal? = nil, targetMarginPct: Decimal? = nil) async throws -> Manifest {
@@ -891,12 +918,13 @@ private struct ManifestRecord: Decodable {
         target_margin_pct = try c.decodeIfPresent(Decimal.self, forKey: .target_margin_pct)
     }
 
-    func makeManifest(items: [ManifestItem]) -> Manifest {
+    func makeManifest(items: [ManifestItem], ownerEmail: String? = nil) -> Manifest {
         Manifest(
             id: id,
             title: title,
             loadReference: load_reference,
             ownerID: owner_id,
+            ownerEmail: ownerEmail,
             orgID: org_id,
             createdAt: created_at,
             updatedAt: updated_at,
