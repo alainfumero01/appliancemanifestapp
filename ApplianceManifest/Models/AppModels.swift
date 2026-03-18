@@ -577,4 +577,17 @@ extension Error {
 
         return userMessage == AppError.notAppliance.errorDescription
     }
+
+    var isOrganizationAccessIssue: Bool {
+        let message: String
+        if let appError = self as? AppError, case let .lookupFailed(raw) = appError {
+            message = raw.lowercased()
+        } else {
+            message = userMessage.lowercased()
+        }
+
+        return message.contains("organization access not found")
+            || message.contains("no organization found for user")
+            || message.contains("organization not found")
+    }
 }

@@ -35,7 +35,13 @@ Deno.serve(async (request) => {
     });
   }
 
-  const [{ data: org }, { count: memberCount }] = await Promise.all([
+  const [{ data: membership }, { data: org }, { count: memberCount }] = await Promise.all([
+    admin
+      .from("org_members")
+      .select("role")
+      .eq("org_id", profile.org_id)
+      .eq("user_id", user.id)
+      .maybeSingle(),
     admin
       .from("organizations")
       .select("id,name,owner_id,subscription_type,billing_platform,subscription_status,app_store_product_id,subscription_expires_at,seat_limit,extra_seats,trial_manifest_limit,trial_manifests_used")
@@ -46,6 +52,13 @@ Deno.serve(async (request) => {
       .select("user_id", { count: "exact", head: true })
       .eq("org_id", profile.org_id),
   ]);
+
+  if (!membership) {
+    return new Response(JSON.stringify({ error: "Organization access not found." }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   if (!org) {
     return new Response(JSON.stringify({ error: "Organization not found." }), {

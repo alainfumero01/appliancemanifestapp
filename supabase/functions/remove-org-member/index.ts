@@ -49,11 +49,64 @@ Deno.serve(async (request) => {
     });
   }
 
+  const { data: removedProfile } = await admin
+    .from("profiles")
+    .select("email, org_id")
+    .eq("id", memberID)
+    .maybeSingle();
+
   await admin
     .from("org_members")
     .delete()
     .eq("org_id", org.id)
     .eq("user_id", memberID);
+
+  const fallbackOrgName = (typeof removedProfile?.email === "string" && removedProfile.email.includes("@"))
+    ? removedProfile.email.split("@")[0]
+    : "LoadScan Member";
+
+  const { data: existingPersonalOrg } = await admin
+    .from("organizations")
+    .select("id")
+    .eq("owner_id", memberID)
+    .neq("id", org.id)
+    .maybeSingle();
+
+  const personalOrg = existingPersonalOrg
+    ? existingPersonalOrg
+    : (await admin
+      .from("organizations")
+      .insert({
+        name: fallbackOrgName,
+        owner_id: memberID,
+        subscription_type: "individual",
+        seat_limit: 1,
+        extra_seats: 0,
+        billing_platform: "none",
+        subscription_status: "free",
+        app_store_product_id: null,
+        subscription_expires_at: null,
+        trial_manifests_used: 0,
+        trial_manifest_limit: 3,
+      })
+      .select("id")
+      .single()).data;
+
+  await admin
+    .from("org_members")
+    .upsert({
+      org_id: personalOrg.id,
+      user_id: memberID,
+      role: "owner",
+    }, { onConflict: "org_id,user_id" });
+
+  await admin
+    .from("profiles")
+    .update({
+      org_id: personalOrg.id,
+      session_nonce: crypto.randomUUID(),
+    })
+    .eq("id", memberID);
 
   const { count: memberCount } = await admin
     .from("org_members")

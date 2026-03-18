@@ -193,17 +193,22 @@ final class SupabaseBackendService: BackendServicing {
         do {
             var headers = anonBearerHeaders
             headers["X-User-Token"] = session.accessToken
-            return try await httpClient.send(
+            let entitlement: OrganizationEntitlement = try await httpClient.send(
                 to: environment.functionsURL.appending(path: "current-entitlements"),
                 method: "GET",
                 headers: headers
             )
+            syncCachedSessionOrgID(entitlement.orgID)
+            return entitlement
         } catch {
+            if error.isOrganizationAccessIssue {
+                syncCachedSessionOrgID(nil)
+            }
             // Edge function failed (network, cold start, JWT issue) — fall back to
             // counting real manifests so the limit still enforces correctly.
             let used = (try? await countManifests(session: session)) ?? 0
             return OrganizationEntitlement(
-                orgID: session.user.orgID ?? session.user.id,
+                orgID: self.session?.user.orgID ?? session.user.id,
                 organizationName: session.user.email,
                 ownerID: session.user.id,
                 subscriptionType: .individual,
@@ -791,6 +796,18 @@ final class SupabaseBackendService: BackendServicing {
             user: AppUser(id: existing.user.id, email: existing.user.email, orgID: response.org_id ?? existing.user.orgID),
             sessionNonce: response.session_nonce
         )
+    }
+
+    private func syncCachedSessionOrgID(_ orgID: UUID?) {
+        guard let current = session else { return }
+        let updated = UserSession(
+            accessToken: current.accessToken,
+            refreshToken: current.refreshToken,
+            user: AppUser(id: current.user.id, email: current.user.email, orgID: orgID),
+            sessionNonce: current.sessionNonce
+        )
+        session = updated
+        sessionStore.save(updated)
     }
 
     private func countManifests(session: UserSession) async throws -> Int {
