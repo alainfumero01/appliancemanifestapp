@@ -1,4 +1,5 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { PLAN_CONFIG, reconcileInviteCodes } from "../_shared/appStore.ts";
 
 function unauthorized() {
   return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -12,7 +13,8 @@ Deno.serve(async (request) => {
     return new Response("Method not allowed", { status: 405 });
   }
 
-  const token = (request.headers.get("Authorization") ?? "").replace("Bearer ", "").trim();
+  const token = request.headers.get("X-User-Token")?.trim()
+    ?? (request.headers.get("Authorization") ?? "").replace("Bearer ", "").trim();
   if (!token) return unauthorized();
 
   const { memberID } = await request.json();
@@ -29,7 +31,7 @@ Deno.serve(async (request) => {
 
   const { data: org } = await admin
     .from("organizations")
-    .select("id, owner_id")
+    .select("id, owner_id, app_store_product_id, seat_limit, subscription_status")
     .eq("owner_id", user.id)
     .maybeSingle();
 
@@ -52,6 +54,24 @@ Deno.serve(async (request) => {
     .delete()
     .eq("org_id", org.id)
     .eq("user_id", memberID);
+
+  const { count: memberCount } = await admin
+    .from("org_members")
+    .select("user_id", { count: "exact", head: true })
+    .eq("org_id", org.id);
+
+  const productID = typeof org.app_store_product_id === "string" ? org.app_store_product_id : null;
+  const plan = productID ? PLAN_CONFIG[productID] : null;
+  const isActive = org.subscription_status === "active";
+
+  if (plan && isActive && plan.extra_seats > 0) {
+    await reconcileInviteCodes(admin, {
+      orgID: org.id,
+      ownerID: org.owner_id,
+      resetPool: false,
+      targetAvailableCodes: Math.max(plan.seat_limit - (memberCount ?? 0), 0),
+    });
+  }
 
   return Response.json({ ok: true });
 });

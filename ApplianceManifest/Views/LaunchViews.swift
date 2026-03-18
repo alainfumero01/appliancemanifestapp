@@ -371,15 +371,11 @@ struct MembershipView: View {
                     Text("Invite your team")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(EnterpriseTheme.textPrimary)
-                    Text("Generate invite codes for teammates to join your organization.")
+                    Text("Invite codes are created automatically based on the seats available in your current plan.")
                         .font(.system(size: 12))
                         .foregroundStyle(EnterpriseTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-
-                Button("Generate Invite Codes") {
-                    Task { await appViewModel.generateInviteLink() }
-                }
-                .buttonStyle(EnterprisePrimaryButtonStyle())
             }
             .padding(16)
             .background(Color.white)

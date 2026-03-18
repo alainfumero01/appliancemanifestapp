@@ -196,7 +196,7 @@ function isInviteCodeAvailable(code: InviteCodeRow): boolean {
   return code.is_active && (code.usage_limit === null || code.usage_count < code.usage_limit);
 }
 
-async function reconcileInviteCodes(
+export async function reconcileInviteCodes(
   admin: SupabaseClient,
   args: {
     orgID: string;

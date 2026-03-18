@@ -123,6 +123,7 @@ final class AppViewModel: ObservableObject {
             try await backend.removeOrgMember(member)
             orgMembers.removeAll { $0.id == member.id }
             await refreshEntitlement()
+            await loadInviteCodes()
         } catch {
             present(error)
         }

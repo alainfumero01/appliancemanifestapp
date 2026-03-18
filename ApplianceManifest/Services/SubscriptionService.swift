@@ -11,6 +11,7 @@ final class SubscriptionService: ObservableObject {
 
     private var updatesTask: Task<Void, Never>?
     private var processedTransactionIDs = Set<UInt64>()
+    private var upgradeFloor: (rank: Int, expiresAt: Date)?
 
     private let productIDs = LoadScanPlanID.allCases
         .filter { $0 != .free }
@@ -55,6 +56,10 @@ final class SubscriptionService: ObservableObject {
             throw AppError.lookupFailed("Subscription product is not available yet. Configure it in App Store Connect.")
         }
 
+        let previousPlanRank = await canonicalActiveTransaction()
+            .map(planRank(for:))
+            ?? 0
+
         let result: Product.PurchaseResult
         if let appAccountToken {
             result = try await product.purchase(options: [.appAccountToken(appAccountToken)])
@@ -66,7 +71,16 @@ final class SubscriptionService: ObservableObject {
         case .success(let verification):
             switch verification {
             case .verified(let transaction):
-                return await handleVerifiedTransaction(transaction, sendEmail: true, finish: true)
+                let selectedPlanRank = plan.includedSeats
+                if selectedPlanRank > previousPlanRank {
+                    armUpgradeFloor(for: selectedPlanRank)
+                }
+
+                let synced = await handleVerifiedTransaction(transaction, sendEmail: true, finish: true)
+                if selectedPlanRank > previousPlanRank {
+                    return PurchaseResult(productID: plan.rawValue, transactionJWS: synced.transactionJWS)
+                }
+                return synced
             case .unverified:
                 throw AppError.lookupFailed("Purchase could not be verified by StoreKit.")
             }
@@ -162,6 +176,10 @@ final class SubscriptionService: ObservableObject {
             return true
         }
 
+        if let floorRank = activeUpgradeFloorRank(), planRank(for: transaction) < floorRank {
+            return true
+        }
+
         return false
     }
 
@@ -190,6 +208,19 @@ final class SubscriptionService: ObservableObject {
     private func planRank(for transaction: Transaction) -> Int {
         guard let plan = LoadScanPlanID(rawValue: transaction.productID) else { return 0 }
         return plan.includedSeats
+    }
+
+    private func armUpgradeFloor(for rank: Int) {
+        upgradeFloor = (rank: rank, expiresAt: Date().addingTimeInterval(45))
+    }
+
+    private func activeUpgradeFloorRank() -> Int? {
+        guard let upgradeFloor else { return nil }
+        guard upgradeFloor.expiresAt > Date() else {
+            self.upgradeFloor = nil
+            return nil
+        }
+        return upgradeFloor.rank
     }
 }
 
