@@ -10,6 +10,7 @@ final class SubscriptionService: ObservableObject {
     var onTransaction: ((PurchaseResult) async -> Void)?
 
     private var updatesTask: Task<Void, Never>?
+    private var processedTransactionIDs = Set<UInt64>()
 
     private let productIDs = LoadScanPlanID.allCases
         .filter { $0 != .free }
@@ -80,19 +81,40 @@ final class SubscriptionService: ObservableObject {
 
     func restorePurchases() async throws {
         try await AppStore.sync()
+
+        let restoredTransactions = await currentActiveTransactions()
+        for transaction in restoredTransactions {
+            _ = await handleVerifiedTransaction(
+                transaction,
+                sendEmail: false,
+                finish: false,
+                allowRepeatSync: true
+            )
+        }
     }
 
     private func handleTransactionUpdate(_ verification: VerificationResult<Transaction>) async {
         guard case .verified(let transaction) = verification else { return }
-        _ = await handleVerifiedTransaction(transaction, sendEmail: true, finish: true)
+        _ = await handleVerifiedTransaction(transaction, sendEmail: false, finish: true)
     }
 
     private func handleVerifiedTransaction(
         _ transaction: Transaction,
         sendEmail: Bool,
-        finish: Bool
+        finish: Bool,
+        allowRepeatSync: Bool = false
     ) async -> PurchaseResult {
         let result = PurchaseResult(productID: transaction.productID, transactionJWS: nil)
+
+        // Upgrades can emit multiple transaction updates. Ignore stale or already-
+        // handled transactions so an older plan doesn't overwrite the new one.
+        let didInsert = processedTransactionIDs.insert(transaction.id).inserted
+        if shouldIgnore(transaction) || (!allowRepeatSync && !didInsert) {
+            if finish {
+                await transaction.finish()
+            }
+            return result
+        }
 
         if sendEmail {
             await backend?.sendSubscriptionEmail(plan: transaction.productID)
@@ -104,6 +126,40 @@ final class SubscriptionService: ObservableObject {
         }
 
         return result
+    }
+
+    private func currentActiveTransactions() async -> [Transaction] {
+        var transactions: [Transaction] = []
+
+        for await verification in Transaction.currentEntitlements {
+            guard case .verified(let transaction) = verification else { continue }
+            guard productIDs.contains(transaction.productID) else { continue }
+            guard shouldRestore(transaction) else { continue }
+            transactions.append(transaction)
+        }
+
+        return transactions.sorted { lhs, rhs in
+            lhs.purchaseDate > rhs.purchaseDate
+        }
+    }
+
+    private func shouldIgnore(_ transaction: Transaction) -> Bool {
+        if transaction.isUpgraded || transaction.revocationDate != nil {
+            return true
+        }
+
+        if let expirationDate = transaction.expirationDate, expirationDate < Date() {
+            return true
+        }
+
+        return false
+    }
+
+    private func shouldRestore(_ transaction: Transaction) -> Bool {
+        guard !shouldIgnore(transaction) else { return false }
+
+        guard let appAccountToken else { return true }
+        return transaction.appAccountToken == nil || transaction.appAccountToken == appAccountToken
     }
 }
 
