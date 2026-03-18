@@ -247,10 +247,12 @@ final class SupabaseBackendService: BackendServicing {
     func removeOrgMember(_ member: OrganizationMember) async throws {
         struct RequestBody: Encodable { let memberID: UUID }
         let session = try await requireSession()
+        var headers = anonBearerHeaders
+        headers["X-User-Token"] = session.accessToken
         _ = try await httpClient.send(
             to: environment.functionsURL.appending(path: "remove-org-member"),
             method: "POST",
-            headers: authenticatedHeaders(token: session.accessToken, prefer: nil),
+            headers: headers,
             body: RequestBody(memberID: member.id)
         ) as EmptyResponse
     }
