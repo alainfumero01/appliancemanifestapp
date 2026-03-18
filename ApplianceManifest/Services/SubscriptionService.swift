@@ -82,8 +82,7 @@ final class SubscriptionService: ObservableObject {
     func restorePurchases() async throws {
         try await AppStore.sync()
 
-        let restoredTransactions = await currentActiveTransactions()
-        for transaction in restoredTransactions {
+        if let transaction = await canonicalActiveTransaction() {
             _ = await handleVerifiedTransaction(
                 transaction,
                 sendEmail: false,
@@ -104,12 +103,13 @@ final class SubscriptionService: ObservableObject {
         finish: Bool,
         allowRepeatSync: Bool = false
     ) async -> PurchaseResult {
-        let result = PurchaseResult(productID: transaction.productID, transactionJWS: nil)
+        let syncTransaction = await canonicalActiveTransaction(preferred: transaction) ?? transaction
+        let result = PurchaseResult(productID: syncTransaction.productID, transactionJWS: nil)
 
-        // Upgrades can emit multiple transaction updates. Ignore stale or already-
-        // handled transactions so an older plan doesn't overwrite the new one.
-        let didInsert = processedTransactionIDs.insert(transaction.id).inserted
-        if shouldIgnore(transaction) || (!allowRepeatSync && !didInsert) {
+        // If Apple surfaces more than one active entitlement, always sync the
+        // highest-value LoadScan plan instead of stacking lower plans beside it.
+        let didInsert = processedTransactionIDs.insert(syncTransaction.id).inserted
+        if shouldIgnore(syncTransaction) || (!allowRepeatSync && !didInsert) {
             if finish {
                 await transaction.finish()
             }
@@ -117,7 +117,7 @@ final class SubscriptionService: ObservableObject {
         }
 
         if sendEmail {
-            await backend?.sendSubscriptionEmail(plan: transaction.productID)
+            await backend?.sendSubscriptionEmail(plan: syncTransaction.productID)
         }
         await onTransaction?(result)
 
@@ -143,6 +143,16 @@ final class SubscriptionService: ObservableObject {
         }
     }
 
+    private func canonicalActiveTransaction(preferred: Transaction? = nil) async -> Transaction? {
+        var transactions = await currentActiveTransactions()
+
+        if let preferred, shouldRestore(preferred), !transactions.contains(where: { $0.id == preferred.id }) {
+            transactions.append(preferred)
+        }
+
+        return transactions.max(by: isLowerPriority(_:_:))
+    }
+
     private func shouldIgnore(_ transaction: Transaction) -> Bool {
         if transaction.isUpgraded || transaction.revocationDate != nil {
             return true
@@ -160,6 +170,26 @@ final class SubscriptionService: ObservableObject {
 
         guard let appAccountToken else { return true }
         return transaction.appAccountToken == nil || transaction.appAccountToken == appAccountToken
+    }
+
+    private func isLowerPriority(_ lhs: Transaction, _ rhs: Transaction) -> Bool {
+        let lhsRank = planRank(for: lhs)
+        let rhsRank = planRank(for: rhs)
+
+        if lhsRank != rhsRank {
+            return lhsRank < rhsRank
+        }
+
+        if lhs.purchaseDate != rhs.purchaseDate {
+            return lhs.purchaseDate < rhs.purchaseDate
+        }
+
+        return lhs.id < rhs.id
+    }
+
+    private func planRank(for transaction: Transaction) -> Int {
+        guard let plan = LoadScanPlanID(rawValue: transaction.productID) else { return 0 }
+        return plan.includedSeats
     }
 }
 
