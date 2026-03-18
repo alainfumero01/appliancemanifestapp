@@ -183,6 +183,85 @@ function randomCode() {
   return `TEAM-${crypto.randomUUID().split("-")[0].toUpperCase()}`;
 }
 
+type InviteCodeRow = {
+  id: string;
+  code: string;
+  created_at?: string | null;
+  is_active: boolean;
+  usage_count: number;
+  usage_limit: number | null;
+};
+
+function isInviteCodeAvailable(code: InviteCodeRow): boolean {
+  return code.is_active && (code.usage_limit === null || code.usage_count < code.usage_limit);
+}
+
+async function reconcileInviteCodes(
+  admin: SupabaseClient,
+  args: {
+    orgID: string;
+    ownerID: string | null;
+    targetAvailableCodes: number;
+    resetPool: boolean;
+  },
+): Promise<string[]> {
+  const { data: rawCodes } = await admin
+    .from("invite_codes")
+    .select("id,code,created_at,is_active,usage_count,usage_limit")
+    .eq("org_id", args.orgID)
+    .order("created_at", { ascending: true });
+
+  const codes = (rawCodes ?? []) as InviteCodeRow[];
+  const exhaustedIDs = codes
+    .filter((code) => code.is_active && code.usage_limit !== null && code.usage_count >= code.usage_limit)
+    .map((code) => code.id);
+
+  if (exhaustedIDs.length > 0) {
+    await admin
+      .from("invite_codes")
+      .update({ is_active: false })
+      .in("id", exhaustedIDs);
+  }
+
+  let availableCodes = codes.filter((code) => !exhaustedIDs.includes(code.id) && isInviteCodeAvailable(code));
+
+  if (args.resetPool && availableCodes.length > 0) {
+    await admin
+      .from("invite_codes")
+      .update({ is_active: false })
+      .in("id", availableCodes.map((code) => code.id));
+    availableCodes = [];
+  }
+
+  if (availableCodes.length > args.targetAvailableCodes) {
+    const extraCodes = availableCodes.slice(args.targetAvailableCodes);
+    await admin
+      .from("invite_codes")
+      .update({ is_active: false })
+      .in("id", extraCodes.map((code) => code.id));
+    availableCodes = availableCodes.slice(0, args.targetAvailableCodes);
+  }
+
+  const missingCount = Math.max(args.targetAvailableCodes - availableCodes.length, 0);
+  if (missingCount === 0) {
+    return [];
+  }
+
+  const generatedCodes = Array.from({ length: missingCount }, () => randomCode());
+  await admin
+    .from("invite_codes")
+    .insert(generatedCodes.map((code) => ({
+      code,
+      is_active: true,
+      usage_limit: 1,
+      usage_count: 0,
+      created_by: args.ownerID,
+      org_id: args.orgID,
+    })));
+
+  return generatedCodes;
+}
+
 async function sendInviteEmail(email: string, codes: string[], seats: number) {
   const codeRows = codes.map((code) =>
     `<tr><td style="padding:8px 12px;font-family:monospace;font-size:15px;font-weight:700;color:#111520;background:#F0F4FF;border-radius:6px;letter-spacing:0.05em;">${code}</td></tr>`
@@ -282,36 +361,21 @@ export async function applySubscriptionUpdate(
     })
     .eq("id", args.orgID);
 
-  if (plan.extra_seats === 0) {
-    await admin
-      .from("invite_codes")
-      .update({ is_active: false })
-      .eq("org_id", args.orgID)
-      .eq("is_active", true);
-    return [];
-  }
+  const { count: memberCount } = await admin
+    .from("org_members")
+    .select("user_id", { count: "exact", head: true })
+    .eq("org_id", args.orgID);
 
-  if (previousProductID === args.productID) {
-    return [];
-  }
+  const targetAvailableCodes = args.status === "active" && plan.extra_seats > 0
+    ? Math.max(plan.seat_limit - (memberCount ?? 0), 0)
+    : 0;
 
-  await admin
-    .from("invite_codes")
-    .update({ is_active: false })
-    .eq("org_id", args.orgID)
-    .eq("is_active", true);
-
-  const generatedCodes = Array.from({ length: plan.extra_seats }, () => randomCode());
-  await admin
-    .from("invite_codes")
-    .insert(generatedCodes.map((code) => ({
-      code,
-      is_active: true,
-      usage_limit: 1,
-      usage_count: 0,
-      created_by: org?.owner_id ?? null,
-      org_id: args.orgID,
-    })));
+  const generatedCodes = await reconcileInviteCodes(admin, {
+    orgID: args.orgID,
+    ownerID: asString(org?.owner_id),
+    resetPool: previousProductID !== args.productID || targetAvailableCodes === 0,
+    targetAvailableCodes,
+  });
 
   if (args.emailInviteCodes && org?.owner_id) {
     const ownerEmail = await lookupOwnerEmail(admin, String(org.owner_id));

@@ -710,6 +710,7 @@ final class SupabaseBackendService: BackendServicing {
             .appending(path: "rest/v1/invite_codes")
             .appending(queryItems: [
                 URLQueryItem(name: "select", value: "id,code,is_active,usage_count,usage_limit"),
+                URLQueryItem(name: "is_active", value: "eq.true"),
                 URLQueryItem(name: "order",  value: "created_at.asc")
             ])
         let rows: [Row] = try await httpClient.send(

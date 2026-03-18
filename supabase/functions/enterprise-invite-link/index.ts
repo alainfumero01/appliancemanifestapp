@@ -52,15 +52,39 @@ Deno.serve(async (request) => {
     });
   }
 
-  const code = randomCode();
-  await admin.from("invite_codes").insert({
-    code,
-    is_active: true,
-    usage_limit: remainingSeats,
-    usage_count: 0,
-    created_by: user.id,
-    org_id: org.id,
-  });
+  const { data: existingCodes } = await admin
+    .from("invite_codes")
+    .select("id, code, is_active, usage_count, usage_limit, created_at")
+    .eq("org_id", org.id)
+    .order("created_at", { ascending: true });
+
+  const activeAvailable = (existingCodes ?? []).filter((code) =>
+    code.is_active && (code.usage_limit === null || code.usage_count < code.usage_limit)
+  );
+
+  let generatedCodes: string[] = [];
+  const missingCount = Math.max(remainingSeats - activeAvailable.length, 0);
+  if (missingCount > 0) {
+    generatedCodes = Array.from({ length: missingCount }, () => randomCode());
+    await admin.from("invite_codes").insert(
+      generatedCodes.map((code) => ({
+        code,
+        is_active: true,
+        usage_limit: 1,
+        usage_count: 0,
+        created_by: user.id,
+        org_id: org.id,
+      }))
+    );
+  }
+
+  const code = activeAvailable[0]?.code ?? generatedCodes[0];
+  if (!code) {
+    return new Response(JSON.stringify({ error: "Your current invite codes are already available below." }), {
+      status: 409,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   return Response.json({
     code,

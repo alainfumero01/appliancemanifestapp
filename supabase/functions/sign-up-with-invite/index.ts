@@ -156,9 +156,13 @@ Deno.serve(async (request) => {
 
   // Increment invite code usage if one was used
   if (invite) {
+    const nextUsageCount = invite.usage_count + 1;
     await admin
       .from("invite_codes")
-      .update({ usage_count: invite.usage_count + 1 })
+      .update({
+        usage_count: nextUsageCount,
+        is_active: invite.usage_limit === null ? true : nextUsageCount < invite.usage_limit,
+      })
       .eq("id", invite.id);
   }
 

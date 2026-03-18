@@ -131,8 +131,12 @@ Deno.serve(async (request) => {
     .eq("id", user.id);
 
   // Increment invite code usage
+  const nextUsageCount = invite.usage_count + 1;
   await admin.from("invite_codes")
-    .update({ usage_count: invite.usage_count + 1 })
+    .update({
+      usage_count: nextUsageCount,
+      is_active: invite.usage_limit === null ? true : nextUsageCount < invite.usage_limit,
+    })
     .eq("id", invite.id);
 
   // Return updated entitlement

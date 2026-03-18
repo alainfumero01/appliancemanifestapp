@@ -4,14 +4,36 @@ const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
 const FROM_EMAIL = "LoadScan <noreply@load-scan.com>";
 
 const PLAN_NAMES: Record<string, string> = {
-  pro: "Pro",
-  enterprise: "Enterprise",
-  monthly: "Pro Monthly",
-  annual: "Pro Annual",
+  "com.alainfumero.loadscan.individual.monthly": "Individual",
+  "com.alainfumero.loadscan.enterprise5.monthly": "Enterprise 5",
+  "com.alainfumero.loadscan.enterprise10.monthly": "Enterprise 10",
+  "com.alainfumero.loadscan.enterprise15.monthly": "Enterprise 15",
 };
 
+function displayPlanName(planKey: string): string {
+  const normalized = planKey.trim().toLowerCase();
+  if (normalized && PLAN_NAMES[normalized]) {
+    return PLAN_NAMES[normalized];
+  }
+
+  const cleaned = planKey
+    .replace(/^com\.alainfumero\.loadscan\./i, "")
+    .replace(/\.monthly$/i, "")
+    .replace(/\.annual$/i, "")
+    .replace(/[._-]+/g, " ")
+    .trim();
+
+  if (!cleaned) return "Membership";
+
+  return cleaned
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 function buildEmail(email: string, planKey: string): string {
-  const planName = PLAN_NAMES[planKey.toLowerCase()] ?? planKey;
+  const planName = displayPlanName(planKey);
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"/></head>
 <body style="margin:0;padding:0;background:#F0F2F8;font-family:-apple-system,sans-serif;">
@@ -74,7 +96,7 @@ Deno.serve(async (request) => {
   let plan = "Pro";
   try {
     const body = await request.json();
-    plan = body.plan ?? "Pro";
+    plan = body.plan ?? "Membership";
   } catch (_) {
     // plan stays as default
   }
@@ -96,7 +118,7 @@ Deno.serve(async (request) => {
     body: JSON.stringify({
       from: FROM_EMAIL,
       to: [email],
-      subject: `Your LoadScan ${PLAN_NAMES[plan.toLowerCase()] ?? plan} subscription is active`,
+      subject: `Your LoadScan ${displayPlanName(plan)} subscription is active`,
       html: buildEmail(email, plan),
     }),
   });
