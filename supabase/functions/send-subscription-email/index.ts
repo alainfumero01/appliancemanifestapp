@@ -2,6 +2,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
 const FROM_EMAIL = "LoadScan <noreply@load-scan.com>";
+const SUPPORT_EMAIL = "alainfumero2000@gmail.com";
 
 const PLAN_NAMES: Record<string, string> = {
   "com.alainfumero.loadscan.individual.monthly": "Individual",
@@ -62,7 +63,7 @@ function buildEmail(email: string, planKey: string): string {
     </table>
     <p style="margin:0 0 20px;font-size:14px;color:#6B7280;line-height:1.65;">Your subscription is managed through the Apple App Store. To manage or cancel, go to <strong>Settings &rarr; Apple ID &rarr; Subscriptions</strong> on your iPhone.</p>
     <hr style="border:none;border-top:1px solid #E5E9F4;margin:28px 0;"/>
-    <p style="margin:0;font-size:12px;color:#9CA3AF;line-height:1.7;">Questions? Reply to this email or reach us at <a href="mailto:support@load-scan.com" style="color:#2550DB;">support@load-scan.com</a></p>
+    <p style="margin:0;font-size:12px;color:#9CA3AF;line-height:1.7;">Questions? Reply to this email or reach us at <a href="mailto:${SUPPORT_EMAIL}" style="color:#2550DB;">${SUPPORT_EMAIL}</a></p>
   </td></tr>
   <tr><td align="center" style="padding-top:20px;">
     <p style="margin:0;font-size:12px;color:#9CA3AF;">2026 LoadScan &nbsp;&middot;&nbsp; <a href="https://load-scan.com/privacy" style="color:#9CA3AF;text-decoration:none;">Privacy Policy</a></p>
@@ -118,6 +119,7 @@ Deno.serve(async (request) => {
     body: JSON.stringify({
       from: FROM_EMAIL,
       to: [email],
+      reply_to: [SUPPORT_EMAIL],
       subject: `Your LoadScan ${displayPlanName(plan)} subscription is active`,
       html: buildEmail(email, plan),
     }),

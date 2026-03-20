@@ -1,5 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
+const SUPPORT_EMAIL = "alainfumero2000@gmail.com";
+
 Deno.serve(async (request) => {
   if (request.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
@@ -66,6 +68,7 @@ Deno.serve(async (request) => {
 
     <hr style="border:none;border-top:1px solid #EEF1F8;margin:0 0 20px;"/>
     <p style="margin:0;font-size:13px;color:#9CA3AF;line-height:1.65;">If you didn't request this, you can safely ignore this email. Your password won't change.</p>
+    <p style="margin:16px 0 0;font-size:12px;color:#9CA3AF;line-height:1.65;">Need help? Reply to this email or contact <a href="mailto:${SUPPORT_EMAIL}" style="color:#2550DB;text-decoration:none;">${SUPPORT_EMAIL}</a>.</p>
   </td></tr>
 
   <tr><td align="center" style="padding-top:20px;">
@@ -87,6 +90,8 @@ ${resetURL}
 
 If you didn't request this, ignore this email — your password won't change.
 
+Need help? ${SUPPORT_EMAIL}
+
 LoadScan · https://load-scan.com`;
 
   await fetch("https://api.resend.com/emails", {
@@ -98,6 +103,7 @@ LoadScan · https://load-scan.com`;
     body: JSON.stringify({
       from: "LoadScan <noreply@load-scan.com>",
       to: [email.trim().toLowerCase()],
+      reply_to: [SUPPORT_EMAIL],
       subject: "Reset your LoadScan password",
       html,
       text,

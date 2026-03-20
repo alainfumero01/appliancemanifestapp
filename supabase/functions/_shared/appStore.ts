@@ -286,7 +286,7 @@ async function sendInviteEmail(email: string, codes: string[], seats: number) {
     </table>
     <p style="margin:0 0 16px;font-size:14px;color:#6B7280;line-height:1.65;">Teammates enter their code on the signup screen in the LoadScan app. Each code is single-use and ties their account to your team.</p>
     <hr style="border:none;border-top:1px solid #E5E9F4;margin:28px 0;"/>
-    <p style="margin:0;font-size:12px;color:#9CA3AF;line-height:1.7;">You can also generate new invite links anytime from <strong>Settings → Membership</strong> in the app.<br/>Questions? <a href="mailto:support@load-scan.com" style="color:#2550DB;">support@load-scan.com</a></p>
+    <p style="margin:0;font-size:12px;color:#9CA3AF;line-height:1.7;">You can also generate new invite links anytime from <strong>Settings → Membership</strong> in the app.<br/>Questions? <a href="mailto:alainfumero2000@gmail.com" style="color:#2550DB;">alainfumero2000@gmail.com</a></p>
   </td></tr>
   <tr><td align="center" style="padding-top:20px;">
     <p style="margin:0;font-size:12px;color:#9CA3AF;">2026 LoadScan &nbsp;&middot;&nbsp; <a href="https://load-scan.com/privacy" style="color:#9CA3AF;text-decoration:none;">Privacy Policy</a></p>
@@ -303,6 +303,7 @@ async function sendInviteEmail(email: string, codes: string[], seats: number) {
     body: JSON.stringify({
       from: "LoadScan <noreply@load-scan.com>",
       to: [email],
+      reply_to: ["alainfumero2000@gmail.com"],
       subject: `Your LoadScan team invite codes (${seats} seat${seats !== 1 ? "s" : ""})`,
       html,
     }),

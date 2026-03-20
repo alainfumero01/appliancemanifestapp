@@ -1,5 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
+const SUPPORT_EMAIL = "alainfumero2000@gmail.com";
+
 async function sendWelcomeEmail(email: string) {
   const firstName = email.split("@")[0];
 
@@ -32,7 +34,7 @@ async function sendWelcomeEmail(email: string) {
 
     <p style="margin:0;font-size:13px;color:#9CA3AF;line-height:1.7;">
       Questions? Reply to this email or reach us at
-      <a href="mailto:support@load-scan.com" style="color:#2550DB;text-decoration:none;">support@load-scan.com</a>
+      <a href="mailto:${SUPPORT_EMAIL}" style="color:#2550DB;text-decoration:none;">${SUPPORT_EMAIL}</a>
     </p>
   </td></tr>
 
@@ -57,9 +59,10 @@ async function sendWelcomeEmail(email: string) {
     body: JSON.stringify({
       from: "LoadScan <noreply@load-scan.com>",
       to: [email],
+      reply_to: [SUPPORT_EMAIL],
       subject: "Welcome to LoadScan",
       html,
-      text: `Welcome to LoadScan\n\nYou're in, ${firstName}. LoadScan is ready to go — scan appliance stickers, build manifests, and price your loads from your phone.\n\nQuestions? support@load-scan.com\n\nLoadScan · https://load-scan.com`,
+      text: `Welcome to LoadScan\n\nYou're in, ${firstName}. LoadScan is ready to go — scan appliance stickers, build manifests, and price your loads from your phone.\n\nQuestions? ${SUPPORT_EMAIL}\n\nLoadScan · https://load-scan.com`,
     }),
   });
 }
