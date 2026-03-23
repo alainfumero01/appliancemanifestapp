@@ -9,6 +9,10 @@ struct AuthView: View {
     @State private var confirmPassword = ""
     @State private var inviteCode      = ""
     @State private var currentNonce    = ""
+    @State private var passwordResetEmail = ""
+    @State private var isSendingPasswordReset = false
+    @State private var showForgotPasswordSheet = false
+    @State private var showPasswordResetConfirmation = false
     @FocusState private var focus: Field?
 
     private enum Field { case email, password, confirmPassword, inviteCode }
@@ -44,6 +48,14 @@ struct AuthView: View {
             confirmPassword = ""
             inviteCode      = ""
             appViewModel.errorMessage = nil
+        }
+        .alert("Password Reset Sent", isPresented: $showPasswordResetConfirmation) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Check your email for a link to reset your password.")
+        }
+        .sheet(isPresented: $showForgotPasswordSheet) {
+            forgotPasswordSheet
         }
     }
 
@@ -262,11 +274,74 @@ struct AuthView: View {
     // MARK: - Forgot password
 
     private var forgotPasswordRow: some View {
-        Button("Forgot your password?") {
-            // Wire to Supabase password reset
+        Button {
+            passwordResetEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            showForgotPasswordSheet = true
+        } label: {
+            if isSendingPasswordReset {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(EnterpriseTheme.textSecondary)
+            } else {
+                Text("Forgot your password?")
+            }
         }
         .font(.system(size: 13))
         .foregroundStyle(EnterpriseTheme.textSecondary)
+        .disabled(isSendingPasswordReset)
+    }
+
+    private var forgotPasswordSheet: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Enter the email for your LoadScan account and we'll send you a reset link.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(EnterpriseTheme.textSecondary)
+
+                AuthField(
+                    label: "Email address",
+                    placeholder: "you@company.com",
+                    text: $passwordResetEmail,
+                    keyboardType: .emailAddress,
+                    capitalization: .never,
+                    submitLabel: .send
+                )
+                .onSubmit(requestPasswordReset)
+
+                Button(action: requestPasswordReset) {
+                    ZStack {
+                        if isSendingPasswordReset {
+                            ProgressView().tint(.white).scaleEffect(0.85)
+                        } else {
+                            Text("Send Reset Link")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .background(
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .fill(EnterpriseTheme.accent.opacity(passwordResetEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSendingPasswordReset ? 0.45 : 1))
+                    )
+                }
+                .disabled(passwordResetEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSendingPasswordReset)
+
+                Spacer(minLength: 0)
+            }
+            .padding(24)
+            .navigationTitle("Reset Password")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        showForgotPasswordSheet = false
+                    }
+                }
+            }
+        }
+        .presentationDetents([.height(280)])
+        .presentationDragIndicator(.visible)
     }
 
     // MARK: - Footer mode toggle
@@ -389,6 +464,31 @@ struct AuthView: View {
                     password: password,
                     inviteCode: normalizedInvite.isEmpty ? nil : normalizedInvite
                 )
+            }
+        }
+    }
+
+    private func requestPasswordReset() {
+        let normalizedEmail = passwordResetEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedEmail.isEmpty else {
+            appViewModel.errorMessage = "Enter your email address and we'll send you a reset link."
+            return
+        }
+
+        focus = nil
+        appViewModel.errorMessage = nil
+        isSendingPasswordReset = true
+
+        Task {
+            defer { isSendingPasswordReset = false }
+            do {
+                try await appViewModel.sendPasswordReset(email: normalizedEmail)
+                email = normalizedEmail
+                passwordResetEmail = normalizedEmail
+                showForgotPasswordSheet = false
+                showPasswordResetConfirmation = true
+            } catch {
+                appViewModel.errorMessage = error.userMessage
             }
         }
     }
