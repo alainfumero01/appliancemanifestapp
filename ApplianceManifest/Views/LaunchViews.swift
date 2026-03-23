@@ -18,6 +18,9 @@ struct MembershipView: View {
         .enterprise15Monthly
     ]
 
+    private let privacyPolicyURL = "https://load-scan.com/privacy"
+    private let termsURL = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/"
+
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 20) {
@@ -224,6 +227,7 @@ struct MembershipView: View {
                 planCard(plan)
             }
 
+            subscriptionDisclosureCard
             purchaseHelpCard
 
             Button {
@@ -287,6 +291,44 @@ struct MembershipView: View {
         }
     }
 
+    private var subscriptionDisclosureCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Auto-Renewable Subscription Information")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(EnterpriseTheme.textPrimary)
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(upgradeablePlans) { plan in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(plan.displayName)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(EnterpriseTheme.textPrimary)
+                        Text("\(priceLabel(for: plan)) · Monthly auto-renewing subscription")
+                            .font(.system(size: 12))
+                            .foregroundStyle(EnterpriseTheme.textSecondary)
+                    }
+                }
+            }
+
+            Text("Payment is charged to your App Store account at confirmation of purchase. Subscription renews automatically unless it is canceled at least 24 hours before the end of the current period. You can manage and cancel subscriptions in your App Store account settings.")
+                .font(.system(size: 12))
+                .foregroundStyle(EnterpriseTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 12) {
+                legalLinkButton(title: "Privacy Policy", urlString: privacyPolicyURL)
+                legalLinkButton(title: "Terms of Use", urlString: termsURL)
+            }
+        }
+        .padding(14)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(EnterpriseTheme.border, lineWidth: 1)
+        }
+    }
+
     private func planCard(_ plan: LoadScanPlanID) -> some View {
         let isEnterprise = plan.isEnterprise
         let accentColor = isEnterprise ? EnterpriseTheme.warning : EnterpriseTheme.accent
@@ -318,6 +360,9 @@ struct MembershipView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(EnterpriseTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Text("Monthly auto-renewing subscription")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(EnterpriseTheme.textTertiary)
             }
 
             Spacer(minLength: 8)
@@ -588,5 +633,24 @@ struct MembershipView: View {
             guard !error.isExpectedCancellation else { return }
             appViewModel.errorMessage = error.userMessage
         }
+    }
+
+    private func legalLinkButton(title: String, urlString: String) -> some View {
+        Button {
+            openURL(urlString)
+        } label: {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(EnterpriseTheme.accent)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(EnterpriseTheme.accentDim)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+    }
+
+    private func openURL(_ string: String) {
+        guard let url = URL(string: string) else { return }
+        UIApplication.shared.open(url)
     }
 }
