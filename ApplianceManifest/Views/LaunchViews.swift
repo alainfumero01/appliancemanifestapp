@@ -26,9 +26,13 @@ struct MembershipView: View {
             VStack(spacing: 20) {
                 accountHeader
                 planStatusCard
-                plansSection
-                if isEnterpriseOwner { teamSection }
-                if isEnterpriseOwner { inviteCodesSection }
+                if hasActiveSubscription {
+                    if isEnterpriseOwner { teamSection }
+                    if isEnterpriseOwner { inviteCodesSection }
+                    plansSection
+                } else {
+                    plansSection
+                }
                 accountFooter
             }
             .padding(.horizontal, EnterpriseTheme.pagePadding)
@@ -53,8 +57,12 @@ struct MembershipView: View {
         appViewModel.entitlement?.isOwner == true
     }
 
+    private var hasActiveSubscription: Bool {
+        appViewModel.entitlement?.subscriptionStatus == .active
+    }
+
     private var currentPlan: LoadScanPlanID? {
-        guard appViewModel.entitlement?.subscriptionStatus == .active else { return nil }
+        guard hasActiveSubscription else { return nil }
         return appViewModel.entitlement?.currentPlan
     }
 
@@ -227,7 +235,7 @@ struct MembershipView: View {
                 planCard(plan)
             }
 
-            subscriptionDisclosureCard
+            legalLinksCard
             purchaseHelpCard
 
             Button {
@@ -291,29 +299,11 @@ struct MembershipView: View {
         }
     }
 
-    private var subscriptionDisclosureCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Auto-Renewable Subscription Information")
+    private var legalLinksCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Privacy Policy and Terms of Use")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(EnterpriseTheme.textPrimary)
-
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(upgradeablePlans) { plan in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(plan.displayName)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(EnterpriseTheme.textPrimary)
-                        Text("\(priceLabel(for: plan)) · Monthly auto-renewing subscription")
-                            .font(.system(size: 12))
-                            .foregroundStyle(EnterpriseTheme.textSecondary)
-                    }
-                }
-            }
-
-            Text("Payment is charged to your App Store account at confirmation of purchase. Subscription renews automatically unless it is canceled at least 24 hours before the end of the current period. You can manage and cancel subscriptions in your App Store account settings.")
-                .font(.system(size: 12))
-                .foregroundStyle(EnterpriseTheme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 12) {
                 legalLinkButton(title: "Privacy Policy", urlString: privacyPolicyURL)
@@ -360,9 +350,13 @@ struct MembershipView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(EnterpriseTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Monthly auto-renewing subscription")
+                Text("\(priceLabel(for: plan)) · Monthly auto-renewing subscription")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(EnterpriseTheme.textTertiary)
+                Text("Billed through the App Store. Renews automatically unless canceled at least 24 hours before the current period ends.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(EnterpriseTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 8)

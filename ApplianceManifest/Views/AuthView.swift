@@ -94,6 +94,7 @@ struct AuthView: View {
             if appViewModel.authMode == .signIn { forgotPasswordRow }
             orDivider
             appleSignInButton
+            appleAuthHelperText
         }
         .padding(24)
         .background(Color.white)
@@ -392,6 +393,19 @@ struct AuthView: View {
         .signInWithAppleButtonStyle(.black)
         .frame(height: 52)
         .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .id(appViewModel.authMode)
+    }
+
+    private var appleAuthHelperText: some View {
+        Text(
+            appViewModel.authMode == .signIn
+            ? "Use your Apple account to sign in to LoadScan."
+            : "Use Apple to create a new LoadScan account in one step."
+        )
+        .font(.system(size: 12))
+        .foregroundStyle(EnterpriseTheme.textTertiary)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func handleAppleSignIn(_ result: Result<ASAuthorization, Error>) {
@@ -406,7 +420,12 @@ struct AuthView: View {
                 return
             }
             Task {
-                await appViewModel.signInWithApple(identityToken: identityToken, nonce: currentNonce)
+                let normalizedInvite = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines)
+                await appViewModel.signInWithApple(
+                    identityToken: identityToken,
+                    nonce: currentNonce,
+                    inviteCode: appViewModel.authMode == .signUp && !normalizedInvite.isEmpty ? normalizedInvite : nil
+                )
             }
         case .failure(let error):
             if (error as? ASAuthorizationError)?.code != .canceled {

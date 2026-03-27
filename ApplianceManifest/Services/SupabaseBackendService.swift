@@ -6,7 +6,7 @@ protocol BackendServicing {
     func restoreSession() async -> UserSession?
     func signIn(email: String, password: String) async throws -> UserSession
     func signUp(email: String, password: String, inviteCode: String?) async throws -> UserSession
-    func signInWithApple(identityToken: String, nonce: String) async throws -> UserSession
+    func signInWithApple(identityToken: String, nonce: String, inviteCode: String?) async throws -> UserSession
     func signOut() async
     func fetchEntitlement() async throws -> OrganizationEntitlement
     func createEnterpriseInviteLink() async throws -> EnterpriseInviteLink
@@ -154,7 +154,7 @@ final class SupabaseBackendService: BackendServicing {
         return newSession
     }
 
-    func signInWithApple(identityToken: String, nonce: String) async throws -> UserSession {
+    func signInWithApple(identityToken: String, nonce: String, inviteCode: String?) async throws -> UserSession {
         struct RequestBody: Encodable {
             let provider: String
             let id_token: String
@@ -177,7 +177,10 @@ final class SupabaseBackendService: BackendServicing {
         let newSession = try response.userSession
 
         // Rotate the session nonce and kick other devices, same as email sign-in.
-        let finalSession = (try? await rotateNonce(for: newSession)) ?? newSession
+        var finalSession = (try? await rotateNonce(for: newSession)) ?? newSession
+        if finalSession.user.orgID == nil {
+            finalSession = try await bootstrapAppleAccount(for: finalSession, inviteCode: inviteCode)
+        }
         session = finalSession
         sessionStore.save(finalSession)
         return finalSession
@@ -808,6 +811,26 @@ final class SupabaseBackendService: BackendServicing {
         )
         session = updated
         sessionStore.save(updated)
+    }
+
+    private func bootstrapAppleAccount(for existing: UserSession, inviteCode: String?) async throws -> UserSession {
+        struct RequestBody: Encodable { let inviteCode: String? }
+        struct Response: Decodable { let org_id: UUID }
+
+        let response: Response = try await httpClient.send(
+            to: environment.functionsURL.appending(path: "bootstrap-apple-account"),
+            method: "POST",
+            headers: authenticatedHeaders(token: existing.accessToken, prefer: nil),
+            body: RequestBody(inviteCode: inviteCode)
+        )
+
+        let updated = UserSession(
+            accessToken: existing.accessToken,
+            refreshToken: existing.refreshToken,
+            user: AppUser(id: existing.user.id, email: existing.user.email, orgID: response.org_id),
+            sessionNonce: existing.sessionNonce
+        )
+        return updated
     }
 
     private func countManifests(session: UserSession) async throws -> Int {

@@ -59,9 +59,9 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func signInWithApple(identityToken: String, nonce: String) async {
+    func signInWithApple(identityToken: String, nonce: String, inviteCode: String? = nil) async {
         await performAuth {
-            try await backend.signInWithApple(identityToken: identityToken, nonce: nonce)
+            try await backend.signInWithApple(identityToken: identityToken, nonce: nonce, inviteCode: inviteCode)
         }
     }
 
@@ -293,7 +293,7 @@ final class PreviewBackendService: BackendServicing {
     func restoreSession() async -> UserSession? { nil }
     func signIn(email: String, password: String) async throws -> UserSession { throw AppError.lookupFailed(error ?? "Configure Supabase to sign in.") }
     func signUp(email: String, password: String, inviteCode: String?) async throws -> UserSession { throw AppError.lookupFailed(error ?? "Configure Supabase to sign up.") }
-    func signInWithApple(identityToken: String, nonce: String) async throws -> UserSession { throw AppError.lookupFailed(error ?? "Configure Supabase to sign in with Apple.") }
+    func signInWithApple(identityToken: String, nonce: String, inviteCode: String?) async throws -> UserSession { throw AppError.lookupFailed(error ?? "Configure Supabase to sign in with Apple.") }
     func signOut() async {}
     func fetchEntitlement() async throws -> OrganizationEntitlement { throw AppError.lookupFailed("Configure subscription entitlements before launch.") }
     func createEnterpriseInviteLink() async throws -> EnterpriseInviteLink { throw AppError.lookupFailed("Configure enterprise invites before launch.") }

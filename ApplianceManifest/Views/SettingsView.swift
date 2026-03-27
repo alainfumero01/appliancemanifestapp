@@ -225,7 +225,7 @@ struct SettingsView: View {
                 iconColor: EnterpriseTheme.accent,
                 title: "Contact Support",
                 showChevron: true,
-                action: { openURL("mailto:alainfumero2000@gmail.com") }
+                action: { openURL("mailto:support@load-scan.com") }
             )
 
             SettingsDivider()
