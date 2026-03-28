@@ -270,7 +270,7 @@ struct LookupSuggestion: Codable, Equatable {
     var status: LookupStatus
 }
 
-struct DraftManifestItem: Identifiable, Equatable {
+struct DraftManifestItem: Identifiable, Equatable, Codable {
     let id: UUID
     var imageData: Data
     var previewName: String
@@ -311,6 +311,17 @@ struct DraftManifestItem: Identifiable, Equatable {
         self.source = source
         self.confidence = confidence
     }
+}
+
+struct NewManifestDraftSnapshot: Codable, Equatable {
+    var title: String
+    var loadReference: String
+    var draftItems: [DraftManifestItem]
+    var manualModelNumber: String
+    var pricingMode: PricingMode
+    var loadCostText: String
+    var targetMarginText: String
+    var savedAt: Date
 }
 
 struct ExportedManifest: Equatable {

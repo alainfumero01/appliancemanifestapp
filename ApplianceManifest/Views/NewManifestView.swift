@@ -9,8 +9,12 @@ struct NewManifestView: View {
     @State private var selectedSourceType: UIImagePickerController.SourceType = .camera
     @State private var isChoosingPhotoSource = false
     @State private var showNotApplianceToast = false
+    @State private var pendingPhotoLookup: PendingPhotoLookup?
+    @State private var hasRestoredLocalDraft = false
+    @State private var didExplicitlySaveManifest = false
     @FocusState private var focusedField: Field?
     private let existingManifest: Manifest?
+    private let draftStore = NewManifestDraftStore()
 
     private enum Field {
         case title, loadReference, loadCost, margin, manualModel
@@ -76,7 +80,11 @@ struct NewManifestView: View {
                                     targetMarginPct: targetMarginPct
                                 )
                             }
-                            if didSave { isPresented = false }
+                            if didSave {
+                                didExplicitlySaveManifest = true
+                                clearLocalDraft()
+                                isPresented = false
+                            }
                         }
                     }
                     .buttonStyle(EnterprisePrimaryButtonStyle())
@@ -99,8 +107,13 @@ struct NewManifestView: View {
             .sheet(isPresented: $isShowingCamera) {
                 CameraPicker(sourceType: selectedSourceType) { image in
                     if let data = image.jpegData(compressionQuality: 0.85) {
-                        Task { await viewModel.ingestPhoto(data: data) }
+                        Task { await prepareScannedPhoto(data) }
                     }
+                }
+            }
+            .sheet(item: $pendingPhotoLookup) { pending in
+                DetectedModelReviewView(pending: pending) { reviewed in
+                    await confirmScannedPhoto(reviewed)
                 }
             }
             .confirmationDialog(
@@ -174,6 +187,34 @@ struct NewManifestView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .animation(.spring(response: 0.35, dampingFraction: 0.8), value: showNotApplianceToast)
                 }
+            }
+            .task {
+                restoreLocalDraftIfNeeded()
+            }
+            .onChange(of: isPresented) { _, presented in
+                guard !presented, !didExplicitlySaveManifest else { return }
+                persistLocalDraftIfNeeded()
+            }
+            .onChange(of: viewModel.title) { _, _ in
+                persistLocalDraftIfNeeded()
+            }
+            .onChange(of: viewModel.loadReference) { _, _ in
+                persistLocalDraftIfNeeded()
+            }
+            .onChange(of: viewModel.draftItems) { _, _ in
+                persistLocalDraftIfNeeded()
+            }
+            .onChange(of: viewModel.manualModelNumber) { _, _ in
+                persistLocalDraftIfNeeded()
+            }
+            .onChange(of: viewModel.pricingMode) { _, _ in
+                persistLocalDraftIfNeeded()
+            }
+            .onChange(of: viewModel.loadCostText) { _, _ in
+                persistLocalDraftIfNeeded()
+            }
+            .onChange(of: viewModel.targetMarginText) { _, _ in
+                persistLocalDraftIfNeeded()
             }
             .enterpriseScreen()
         }
@@ -532,6 +573,79 @@ struct NewManifestView: View {
             }
         )
     }
+
+    private var draftUserID: UUID? {
+        appViewModel.session?.user.id
+    }
+
+    private func persistLocalDraftIfNeeded() {
+        guard existingManifest == nil, let userID = draftUserID else { return }
+        if let snapshot = viewModel.autosaveSnapshot {
+            draftStore.save(snapshot, userID: userID)
+        } else {
+            draftStore.clear(userID: userID)
+        }
+    }
+
+    private func restoreLocalDraftIfNeeded() {
+        guard existingManifest == nil, !hasRestoredLocalDraft else { return }
+        hasRestoredLocalDraft = true
+        guard let userID = draftUserID,
+              let snapshot = draftStore.restore(userID: userID) else { return }
+        viewModel.restore(from: snapshot)
+    }
+
+    private func clearLocalDraft() {
+        guard existingManifest == nil, let userID = draftUserID else { return }
+        draftStore.clear(userID: userID)
+    }
+
+    private func prepareScannedPhoto(_ data: Data) async {
+        do {
+            let detectedModel = try await viewModel.detectModelNumberForPhoto(data: data)
+            pendingPhotoLookup = PendingPhotoLookup(
+                imageData: data,
+                modelNumber: detectedModel,
+                helperText: "Confirm the detected model number before LoadScan looks up the product."
+            )
+        } catch AppError.notAppliance {
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            viewModel.notApplianceDetected = true
+        } catch {
+            if error.isNotApplianceIssue {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                viewModel.notApplianceDetected = true
+                return
+            }
+
+            pendingPhotoLookup = PendingPhotoLookup(
+                imageData: data,
+                modelNumber: "",
+                helperText: "LoadScan could not confidently read the sticker. Enter the model number manually to continue."
+            )
+        }
+    }
+
+    private func confirmScannedPhoto(_ pending: PendingPhotoLookup) async -> Bool {
+        do {
+            try await viewModel.lookupScannedModelNumber(pending.modelNumber, imageData: pending.imageData)
+            pendingPhotoLookup = nil
+            return true
+        } catch AppError.notAppliance {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            viewModel.notApplianceDetected = true
+            return false
+        } catch {
+            if error.isNotApplianceIssue {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                viewModel.notApplianceDetected = true
+                return false
+            }
+
+            viewModel.errorMessage = error.userMessage
+            return false
+        }
+    }
 }
 
 // MARK: - Scanning Overlay
@@ -563,6 +677,101 @@ private struct ScanningOverlay: View {
                     .stroke(EnterpriseTheme.border, lineWidth: 1)
             }
             .shadow(color: Color.black.opacity(0.12), radius: 24, x: 0, y: 8)
+        }
+    }
+}
+
+private struct PendingPhotoLookup: Identifiable, Equatable {
+    let id = UUID()
+    let imageData: Data
+    var modelNumber: String
+    let helperText: String
+}
+
+private struct DetectedModelReviewView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var pending: PendingPhotoLookup
+    @FocusState private var focusedField: Bool
+    let onConfirm: (PendingPhotoLookup) async -> Bool
+
+    init(pending: PendingPhotoLookup, onConfirm: @escaping (PendingPhotoLookup) async -> Bool) {
+        _pending = State(initialValue: pending)
+        self.onConfirm = onConfirm
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    EnterpriseCard {
+                        EnterpriseSectionHeader(
+                            eyebrow: "Scan Check",
+                            title: "Confirm model number",
+                            subtitle: pending.helperText
+                        )
+
+                        if let image = UIImage(data: pending.imageData) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 180)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .stroke(EnterpriseTheme.border, lineWidth: 1)
+                                }
+                        }
+
+                        EnterpriseField(
+                            title: "Detected Model Number",
+                            prompt: "Enter model number",
+                            text: $pending.modelNumber,
+                            capitalization: .characters
+                        )
+                        .focused($focusedField)
+                    }
+                }
+                .padding(.horizontal, EnterpriseTheme.pagePadding)
+                .padding(.top, 20)
+                .padding(.bottom, 130)
+            }
+            .navigationTitle("Sticker Read")
+            .navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .bottom) {
+                EnterpriseActionBar {
+                    if focusedField {
+                        Button("Dismiss Keyboard") { focusedField = false }
+                            .buttonStyle(EnterpriseSecondaryButtonStyle())
+                    }
+                    Button("Search Product") {
+                        focusedField = false
+                        pending.modelNumber = ModelNumberNormalizer.normalize(pending.modelNumber)
+                        Task {
+                            if await onConfirm(pending) {
+                                dismiss()
+                            }
+                        }
+                    }
+                    .buttonStyle(EnterprisePrimaryButtonStyle())
+                    .disabled(pending.modelNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(EnterpriseTheme.textSecondary)
+                            .padding(7)
+                            .background(EnterpriseTheme.surfacePrimary)
+                            .clipShape(Circle())
+                            .overlay { Circle().stroke(EnterpriseTheme.border, lineWidth: 1) }
+                    }
+                }
+            }
+            .enterpriseScreen()
         }
     }
 }

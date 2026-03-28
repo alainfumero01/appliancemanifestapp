@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-enum PricingMode: String, CaseIterable {
+enum PricingMode: String, CaseIterable, Codable {
     case perItem = "Per Item"
     case loadBased = "Load Pricing"
 }
@@ -31,60 +31,74 @@ final class NewManifestViewModel: ObservableObject {
         self.backend = backend
     }
 
-    func ingestPhoto(data: Data) async {
+    var hasUnsavedProgress: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || !loadReference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || !manualModelNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || !loadCostText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || !targetMarginText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || !draftItems.isEmpty
+    }
+
+    var autosaveSnapshot: NewManifestDraftSnapshot? {
+        guard hasUnsavedProgress else { return nil }
+        return NewManifestDraftSnapshot(
+            title: title,
+            loadReference: loadReference,
+            draftItems: draftItems,
+            manualModelNumber: manualModelNumber,
+            pricingMode: pricingMode,
+            loadCostText: loadCostText,
+            targetMarginText: targetMarginText,
+            savedAt: Date()
+        )
+    }
+
+    func restore(from snapshot: NewManifestDraftSnapshot) {
+        title = snapshot.title
+        loadReference = snapshot.loadReference
+        draftItems = snapshot.draftItems
+        manualModelNumber = snapshot.manualModelNumber
+        pricingMode = snapshot.pricingMode
+        loadCostText = snapshot.loadCostText
+        targetMarginText = snapshot.targetMarginText
+    }
+
+    func detectModelNumberForPhoto(data: Data) async throws -> String {
         isScanning = true
         defer { isScanning = false }
 
-        do {
-            let suggestion: LookupSuggestion
-
-            if let ocrFirst = try? await ingestViaOCRFirst(data: data) {
-                suggestion = ocrFirst
-            } else {
-                suggestion = try await backend.ingestSticker(imageData: data)
-            }
-
-            let draft = DraftManifestItem(
-                imageData: data,
-                modelNumber: suggestion.normalizedModelNumber,
-                productName: suggestion.productName,
-                msrpText: NSDecimalNumber(decimal: suggestion.msrp).stringValue,
-                quantity: 1,
-                lookupStatus: suggestion.status,
-                source: suggestion.source,
-                confidence: suggestion.confidence
-            )
-            draftItems.append(draft)
-            selectedDraftID = draft.id
-        } catch AppError.notAppliance {
-            try? await Task.sleep(nanoseconds: 600_000_000)
-            notApplianceDetected = true
-        } catch {
-            if error.isNotApplianceIssue {
-                try? await Task.sleep(nanoseconds: 600_000_000)
-                notApplianceDetected = true
-                return
-            }
-
-            let msg = error.userMessage
-            print("❌ ingestPhoto error: \(error)")
-            let fallback = DraftManifestItem(imageData: data, lookupStatus: .needsReview)
-            draftItems.append(fallback)
-            selectedDraftID = fallback.id
-            // Wait for the camera sheet to finish dismissing before showing the alert
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            errorMessage = msg
-        }
-    }
-
-    private func ingestViaOCRFirst(data: Data) async throws -> LookupSuggestion {
         let extractedModel = try await backend.extractModelNumber(from: data)
         let normalizedModel = ModelNumberNormalizer.normalize(extractedModel)
         guard !normalizedModel.isEmpty else {
             throw AppError.ocrFailed
         }
 
-        return try await backend.lookupProduct(modelNumber: normalizedModel)
+        return normalizedModel
+    }
+
+    func lookupScannedModelNumber(_ modelNumber: String, imageData: Data) async throws {
+        isScanning = true
+        defer { isScanning = false }
+
+        let normalizedModel = ModelNumberNormalizer.normalize(modelNumber)
+        guard !normalizedModel.isEmpty else {
+            throw AppError.lookupFailed("Enter the model number before searching.")
+        }
+
+        let suggestion = try await backend.lookupProduct(modelNumber: normalizedModel)
+        let draft = DraftManifestItem(
+            imageData: imageData,
+            modelNumber: suggestion.normalizedModelNumber,
+            productName: suggestion.productName,
+            msrpText: NSDecimalNumber(decimal: suggestion.msrp).stringValue,
+            quantity: 1,
+            lookupStatus: suggestion.status,
+            source: suggestion.source,
+            confidence: suggestion.confidence
+        )
+        draftItems.append(draft)
+        selectedDraftID = draft.id
     }
 
     func updateDraft(_ draft: DraftManifestItem) {
@@ -93,9 +107,15 @@ final class NewManifestViewModel: ObservableObject {
     }
 
     func saveReviewedDraft(_ draft: DraftManifestItem) async {
-        updateDraft(draft)
+        var reviewedDraft = draft
+        reviewedDraft.lookupStatus = .confirmed
+        if reviewedDraft.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            reviewedDraft.source = "operator-confirmed"
+        }
 
-        guard let suggestion = catalogSuggestion(from: draft) else { return }
+        updateDraft(reviewedDraft)
+
+        guard let suggestion = catalogSuggestion(from: reviewedDraft) else { return }
         do {
             try await backend.confirmProduct(suggestion)
         } catch {

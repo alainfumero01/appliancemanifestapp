@@ -515,16 +515,18 @@ final class SupabaseBackendService: BackendServicing {
         do {
             for draft in draftItems {
                 let normalized = ModelNumberNormalizer.normalize(draft.modelNumber)
-                let suggestion = LookupSuggestion(
-                    normalizedModelNumber: normalized,
-                    productName: draft.productName,
-                    msrp: Decimal(string: draft.msrpText) ?? 0,
-                    source: draft.source.isEmpty ? "operator-confirmed" : draft.source,
-                    confidence: draft.confidence,
-                    status: .confirmed
-                )
+                if draft.lookupStatus == .confirmed || draft.lookupStatus == .cached {
+                    let suggestion = LookupSuggestion(
+                        normalizedModelNumber: normalized,
+                        productName: draft.productName,
+                        msrp: Decimal(string: draft.msrpText) ?? 0,
+                        source: draft.source.isEmpty ? "operator-confirmed" : draft.source,
+                        confidence: draft.confidence,
+                        status: .confirmed
+                    )
 
-                try? await confirmProduct(suggestion)
+                    try? await confirmProduct(suggestion)
+                }
 
                 let photoPath: String?
                 if draft.imageData.isEmpty {
@@ -883,11 +885,15 @@ final class SupabaseBackendService: BackendServicing {
         )
 
         guard let record = records.first else { return nil }
+        if record.source?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "model-ai" {
+            return nil
+        }
+
         return LookupSuggestion(
             normalizedModelNumber: record.normalized_model_number,
             productName: record.product_name,
             msrp: record.msrp,
-            source: "catalog-cache",
+            source: record.source ?? "catalog-cache",
             confidence: record.confidence,
             status: .cached
         )
@@ -1104,6 +1110,7 @@ private struct CatalogProductRecord: Decodable {
     let normalized_model_number: String
     let product_name: String
     let msrp: Decimal
+    let source: String?
     let confidence: Double
 }
 

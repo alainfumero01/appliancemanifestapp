@@ -113,6 +113,54 @@ final class SessionStore {
     }
 }
 
+final class NewManifestDraftStore {
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
+    private let fileManager: FileManager
+
+    init(fileManager: FileManager = .default) {
+        self.fileManager = fileManager
+        self.encoder = JSONEncoder()
+        self.encoder.dateEncodingStrategy = .iso8601
+        self.decoder = JSONDecoder()
+        self.decoder.dateDecodingStrategy = .iso8601
+    }
+
+    func save(_ snapshot: NewManifestDraftSnapshot, userID: UUID) {
+        guard let url = draftURL(for: userID) else { return }
+        do {
+            try fileManager.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let data = try encoder.encode(snapshot)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            print("Failed to save manifest draft: \(error)")
+        }
+    }
+
+    func restore(userID: UUID) -> NewManifestDraftSnapshot? {
+        guard let url = draftURL(for: userID),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? decoder.decode(NewManifestDraftSnapshot.self, from: data)
+    }
+
+    func clear(userID: UUID) {
+        guard let url = draftURL(for: userID) else { return }
+        try? fileManager.removeItem(at: url)
+    }
+
+    private func draftURL(for userID: UUID) -> URL? {
+        guard let baseURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        return baseURL
+            .appendingPathComponent("LoadScanDrafts", isDirectory: true)
+            .appendingPathComponent("\(userID.uuidString)-new-manifest.json")
+    }
+}
+
 @MainActor
 final class BiometricService {
     private let defaults = UserDefaults.standard
