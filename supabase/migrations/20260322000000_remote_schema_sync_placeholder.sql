@@ -1,0 +1,4 @@
+-- Placeholder to align local migration history with a migration that was
+-- already applied on the linked remote project outside the current repo state.
+-- Intentionally left empty so future db pushes can proceed without mutating
+-- the live schema for the current App Store 1.0 release.

@@ -50,9 +50,9 @@ const BATCH_SIZE = 50;    // Records per Supabase upsert call
 const DELAY_MS   = 250;   // Pause between Best Buy API pages to stay polite
 
 // Mirrors the iOS app's ModelNumberNormalizer:
-// uppercase, strip spaces, dashes, slashes, dots
+// uppercase, strip any non-alphanumeric characters
 function normalizeModelNumber(raw) {
-  return raw.toUpperCase().replace(/[\s\-\/\\.]/g, '');
+  return raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
 async function fetchBestBuyPage(categoryId, page) {

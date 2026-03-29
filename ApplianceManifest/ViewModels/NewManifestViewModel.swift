@@ -77,7 +77,7 @@ final class NewManifestViewModel: ObservableObject {
         return normalizedModel
     }
 
-    func lookupScannedModelNumber(_ modelNumber: String, imageData: Data) async throws {
+    func lookupScannedModelNumber(_ modelNumber: String, imageData: Data, observedModelNumber: String? = nil) async throws {
         isScanning = true
         defer { isScanning = false }
 
@@ -89,6 +89,7 @@ final class NewManifestViewModel: ObservableObject {
         let suggestion = try await backend.lookupProduct(modelNumber: normalizedModel)
         let draft = DraftManifestItem(
             imageData: imageData,
+            observedModelNumber: ModelNumberNormalizer.normalize(observedModelNumber ?? normalizedModel),
             modelNumber: suggestion.normalizedModelNumber,
             productName: suggestion.productName,
             msrpText: NSDecimalNumber(decimal: suggestion.msrp).stringValue,
@@ -117,7 +118,7 @@ final class NewManifestViewModel: ObservableObject {
 
         guard let suggestion = catalogSuggestion(from: reviewedDraft) else { return }
         do {
-            try await backend.confirmProduct(suggestion)
+            try await backend.confirmProduct(suggestion, aliasModelNumbers: aliasModelNumbers(for: reviewedDraft))
         } catch {
             errorMessage = error.userMessage
         }
@@ -125,6 +126,24 @@ final class NewManifestViewModel: ObservableObject {
 
     func removeDraft(id: UUID) {
         draftItems.removeAll { $0.id == id }
+        if selectedDraftID == id {
+            selectedDraftID = nil
+        }
+    }
+
+    func resetNewManifestComposer() {
+        title = ""
+        loadReference = ""
+        draftItems = []
+        selectedDraftID = nil
+        isScanning = false
+        isSaving = false
+        errorMessage = nil
+        notApplianceDetected = false
+        manualModelNumber = ""
+        pricingMode = .perItem
+        loadCostText = ""
+        targetMarginText = ""
     }
 
     func lookupManualModelNumber() async {
@@ -145,6 +164,7 @@ final class NewManifestViewModel: ObservableObject {
             let msrpString = msrp == .notANumber ? "" : msrp.stringValue
             let draft = DraftManifestItem(
                 imageData: Data(),  // no photo for manual entries
+                observedModelNumber: normalized,
                 modelNumber: suggestion.normalizedModelNumber,
                 productName: suggestion.productName,
                 msrpText: msrpString,
@@ -267,5 +287,14 @@ final class NewManifestViewModel: ObservableObject {
             confidence: draft.confidence,
             status: .confirmed
         )
+    }
+
+    private func aliasModelNumbers(for draft: DraftManifestItem) -> [String] {
+        let observed = ModelNumberNormalizer.normalize(draft.observedModelNumber ?? "")
+        let canonical = ModelNumberNormalizer.normalize(draft.modelNumber)
+        guard !observed.isEmpty, !canonical.isEmpty, observed != canonical else {
+            return []
+        }
+        return [observed]
     }
 }

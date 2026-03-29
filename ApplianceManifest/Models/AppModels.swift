@@ -274,6 +274,7 @@ struct DraftManifestItem: Identifiable, Equatable, Codable {
     let id: UUID
     var imageData: Data
     var previewName: String
+    var observedModelNumber: String?
     var modelNumber: String
     var productName: String
     var msrpText: String
@@ -288,6 +289,7 @@ struct DraftManifestItem: Identifiable, Equatable, Codable {
         id: UUID = UUID(),
         imageData: Data,
         previewName: String = "Sticker",
+        observedModelNumber: String? = nil,
         modelNumber: String = "",
         productName: String = "",
         msrpText: String = "",
@@ -301,6 +303,7 @@ struct DraftManifestItem: Identifiable, Equatable, Codable {
         self.id = id
         self.imageData = imageData
         self.previewName = previewName
+        self.observedModelNumber = observedModelNumber
         self.modelNumber = modelNumber
         self.productName = productName
         self.msrpText = msrpText

@@ -23,7 +23,7 @@ protocol BackendServicing {
     func ingestSticker(imageData: Data) async throws -> LookupSuggestion
     func extractModelNumber(from imageData: Data) async throws -> String
     func lookupProduct(modelNumber: String) async throws -> LookupSuggestion
-    func confirmProduct(_ suggestion: LookupSuggestion) async throws
+    func confirmProduct(_ suggestion: LookupSuggestion, aliasModelNumbers: [String]) async throws
     func updateItem(_ item: ManifestItem, in manifest: Manifest) async throws -> Manifest
     func exportManifest(_ manifest: Manifest) async throws -> ExportedManifest
     func sendSubscriptionEmail(plan: String) async
@@ -39,6 +39,7 @@ final class SupabaseBackendService: BackendServicing {
     private let exportService = SpreadsheetExportService()
     private let ocrService = VisionOCRService()
     private var session: UserSession?
+    private var lookupSuggestionCache: [String: LookupSuggestion] = [:]
 
     init(environment: AppEnvironment, sessionStore: SessionStore = SessionStore(), httpClient: HTTPClient = HTTPClient()) {
         self.environment = environment
@@ -128,6 +129,7 @@ final class SupabaseBackendService: BackendServicing {
             body: RequestBody(email: email, password: password)
         )
         let newSession = response.userSession
+        lookupSuggestionCache.removeAll()
         session = newSession
         sessionStore.save(newSession)
         return newSession
@@ -149,6 +151,7 @@ final class SupabaseBackendService: BackendServicing {
             body: Body(email: email, password: password, inviteCode: inviteCode)
         )
         let newSession = response.userSession
+        lookupSuggestionCache.removeAll()
         session = newSession
         sessionStore.save(newSession)
         return newSession
@@ -181,12 +184,14 @@ final class SupabaseBackendService: BackendServicing {
         if finalSession.user.orgID == nil {
             finalSession = try await bootstrapAppleAccount(for: finalSession, inviteCode: inviteCode)
         }
+        lookupSuggestionCache.removeAll()
         session = finalSession
         sessionStore.save(finalSession)
         return finalSession
     }
 
     func signOut() async {
+        lookupSuggestionCache.removeAll()
         session = nil
         sessionStore.clear()
     }
@@ -380,8 +385,28 @@ final class SupabaseBackendService: BackendServicing {
                 targetMarginPct: targetMarginPct
             )
         } catch {
+            if let recovery = try? await recoverManifestCreation(
+                manifestID: manifestID,
+                expectedDraftItems: draftItems,
+                token: session.accessToken,
+                ownerEmail: session.user.email
+            ) {
+                switch recovery {
+                case .complete(let manifest):
+                    return manifest
+                case .partial(let manifest):
+                    let cleaned = await cleanupPartialManifest(manifest, token: session.accessToken)
+                    if cleaned {
+                        throw AppError.lookupFailed("We hit a save issue and cleaned up the partial load. Please try again.")
+                    }
+                    throw AppError.lookupFailed("This load may have partially saved. Check My Loads before trying again.")
+                case .missing:
+                    break
+                }
+            }
+
             try? await deleteManifestByID(manifestID, token: session.accessToken)
-            throw error
+            throw AppError.lookupFailed("We couldn't save this load right now. Please try again.")
         }
     }
 
@@ -496,7 +521,7 @@ final class SupabaseBackendService: BackendServicing {
 
         let smallData = Self.resizedJPEG(imageData, maxDimension: 768, compressionQuality: 0.55) ?? imageData
         return try await httpClient.send(
-            to: environment.functionsURL.appending(path: "ingest-sticker"),
+            to: environment.functionsURL.appending(path: "ingest-sticker-v2"),
             method: "POST",
             headers: anonBearerHeaders,
             body: IngestRequest(imageBase64: smallData.base64EncodedString())
@@ -525,7 +550,7 @@ final class SupabaseBackendService: BackendServicing {
                         status: .confirmed
                     )
 
-                    try? await confirmProduct(suggestion)
+                    try? await confirmProduct(suggestion, aliasModelNumbers: aliasModelNumbers(for: draft))
                 }
 
                 let photoPath: String?
@@ -621,19 +646,26 @@ final class SupabaseBackendService: BackendServicing {
         let session = try await requireSession()
         let normalized = ModelNumberNormalizer.normalize(modelNumber)
 
-        if let cached = try await fetchCatalogSuggestion(normalizedModelNumber: normalized, token: session.accessToken) {
+        if let cached = lookupSuggestionCache[normalized] {
             return cached
         }
 
-        return try await httpClient.send(
-            to: environment.functionsURL.appending(path: "lookup-product"),
+        if let cached = try await fetchCatalogSuggestion(normalizedModelNumber: normalized, token: session.accessToken) {
+            cacheLookupSuggestion(cached)
+            return cached
+        }
+
+        let suggestion: LookupSuggestion = try await httpClient.send(
+            to: environment.functionsURL.appending(path: "lookup-product-v2"),
             method: "POST",
             headers: anonBearerHeaders,
             body: RequestBody(modelNumber: normalized)
         )
+        cacheLookupSuggestion(suggestion)
+        return suggestion
     }
 
-    func confirmProduct(_ suggestion: LookupSuggestion) async throws {
+    func confirmProduct(_ suggestion: LookupSuggestion, aliasModelNumbers: [String] = []) async throws {
         struct ConfirmProductRequest: Encodable {
             let normalizedModelNumber: String
             let productName: String
@@ -651,12 +683,13 @@ final class SupabaseBackendService: BackendServicing {
             confidence: suggestion.confidence
         )
 
-        _ = try await httpClient.send(
-            to: environment.functionsURL.appending(path: "confirm-product"),
+        let confirmed: LookupSuggestion = try await httpClient.send(
+            to: environment.functionsURL.appending(path: "confirm-product-v2"),
             method: "POST",
             headers: anonBearerHeaders,
             body: payload
-        ) as LookupSuggestion
+        )
+        cacheLookupSuggestion(confirmed, additionalModelNumbers: aliasModelNumbers)
     }
 
     func updateItem(_ item: ManifestItem, in manifest: Manifest) async throws -> Manifest {
@@ -787,6 +820,37 @@ final class SupabaseBackendService: BackendServicing {
         return records.map { $0.makeManifestItem() }
     }
 
+    private func fetchManifestRecord(id: UUID, token: String) async throws -> ManifestRecord? {
+        let url = environment.supabaseURL
+            .appending(path: "rest/v1/manifests")
+            .appending(queryItems: [
+                URLQueryItem(name: "id", value: "eq.\(id.uuidString)"),
+                URLQueryItem(name: "limit", value: "1")
+            ])
+
+        let records: [ManifestRecord] = try await httpClient.send(
+            to: url,
+            method: "GET",
+            headers: authenticatedHeaders(token: token, prefer: nil)
+        )
+        return records.first
+    }
+
+    private func fetchManifestItems(manifestID: UUID, token: String) async throws -> [ManifestItem] {
+        let url = environment.supabaseURL
+            .appending(path: "rest/v1/manifest_items")
+            .appending(queryItems: [
+                URLQueryItem(name: "manifest_id", value: "eq.\(manifestID.uuidString)")
+            ])
+
+        let records: [ManifestItemRecord] = try await httpClient.send(
+            to: url,
+            method: "GET",
+            headers: authenticatedHeaders(token: token, prefer: nil)
+        )
+        return records.map { $0.makeManifestItem() }
+    }
+
     private func rotateNonce(for existing: UserSession) async throws -> UserSession {
         struct RotateResponse: Decodable { let session_nonce: UUID; let org_id: UUID? }
         let response: RotateResponse = try await httpClient.send(
@@ -897,6 +961,73 @@ final class SupabaseBackendService: BackendServicing {
             confidence: record.confidence,
             status: .cached
         )
+    }
+
+    private func recoverManifestCreation(
+        manifestID: UUID,
+        expectedDraftItems: [DraftManifestItem],
+        token: String,
+        ownerEmail: String?
+    ) async throws -> ManifestCreationRecovery {
+        guard let manifestRecord = try await fetchManifestRecord(id: manifestID, token: token) else {
+            return .missing
+        }
+
+        let manifestItems = try await fetchManifestItems(manifestID: manifestID, token: token)
+        let expectedItemIDs = Set(expectedDraftItems.map(\.id))
+        let actualItemIDs = Set(manifestItems.map(\.id))
+        let manifest = manifestRecord.makeManifest(items: manifestItems, ownerEmail: ownerEmail)
+
+        if expectedItemIDs.isSubset(of: actualItemIDs) {
+            return .complete(manifest)
+        }
+
+        return .partial(manifest)
+    }
+
+    private func cleanupPartialManifest(_ manifest: Manifest, token: String) async -> Bool {
+        let photoPaths = manifest.items.compactMap(\.photoPath)
+        if !photoPaths.isEmpty {
+            try? await deletePhotos(at: photoPaths, token: token)
+        }
+
+        do {
+            try await deleteManifestByID(manifest.id, token: token)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func cacheLookupSuggestion(_ suggestion: LookupSuggestion, additionalModelNumbers: [String] = []) {
+        let normalized = ModelNumberNormalizer.normalize(suggestion.normalizedModelNumber)
+        guard !normalized.isEmpty else { return }
+
+        let cachedSuggestion = LookupSuggestion(
+            normalizedModelNumber: normalized,
+            productName: suggestion.productName,
+            msrp: suggestion.msrp,
+            source: suggestion.source,
+            confidence: suggestion.confidence,
+            status: suggestion.status
+        )
+
+        lookupSuggestionCache[normalized] = cachedSuggestion
+
+        for alias in additionalModelNumbers {
+            let normalizedAlias = ModelNumberNormalizer.normalize(alias)
+            guard !normalizedAlias.isEmpty else { continue }
+            lookupSuggestionCache[normalizedAlias] = cachedSuggestion
+        }
+    }
+
+    private func aliasModelNumbers(for draft: DraftManifestItem) -> [String] {
+        let observed = ModelNumberNormalizer.normalize(draft.observedModelNumber ?? "")
+        let canonical = ModelNumberNormalizer.normalize(draft.modelNumber)
+        guard !observed.isEmpty, !canonical.isEmpty, observed != canonical else {
+            return []
+        }
+        return [observed]
     }
 
     private func recordManifestSaveUsage() async throws {
@@ -1112,6 +1243,12 @@ private struct CatalogProductRecord: Decodable {
     let msrp: Decimal
     let source: String?
     let confidence: Double
+}
+
+private enum ManifestCreationRecovery {
+    case complete(Manifest)
+    case partial(Manifest)
+    case missing
 }
 
 private struct ManifestInsert: Encodable {

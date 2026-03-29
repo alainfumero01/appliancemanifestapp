@@ -54,7 +54,7 @@ def require_env():
         )
 
 def normalize_model(raw):
-    return re.sub(r'[\s\-/\\.]', '', raw).upper()
+    return re.sub(r'[^A-Z0-9]', '', raw.upper())
 
 def fetch_page(name_keyword, page, attempt=1):
     encoded = urllib.parse.quote(name_keyword)

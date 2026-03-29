@@ -194,7 +194,9 @@ final class AppViewModel: ObservableObject {
         defer { isLoading = false }
         do {
             let manifest = try await backend.createManifest(title: title, loadReference: loadReference, draftItems: items, loadCost: loadCost, targetMarginPct: targetMarginPct)
+            manifests.removeAll { $0.id == manifest.id }
             manifests.insert(manifest, at: 0)
+            errorMessage = nil
             await refreshEntitlement()
             return true
         } catch {
@@ -310,7 +312,7 @@ final class PreviewBackendService: BackendServicing {
     func ingestSticker(imageData: Data) async throws -> LookupSuggestion { throw AppError.lookupFailed("Scanning requires a configured iPhone target.") }
     func extractModelNumber(from imageData: Data) async throws -> String { throw AppError.lookupFailed("Scanning requires a configured iPhone target.") }
     func lookupProduct(modelNumber: String) async throws -> LookupSuggestion { throw AppError.lookupFailed("Lookup requires the Supabase Edge Function.") }
-    func confirmProduct(_ suggestion: LookupSuggestion) async throws {}
+    func confirmProduct(_ suggestion: LookupSuggestion, aliasModelNumbers: [String]) async throws {}
     func updateItem(_ item: ManifestItem, in manifest: Manifest) async throws -> Manifest { manifest }
     func exportManifest(_ manifest: Manifest) async throws -> ExportedManifest { try SpreadsheetExportService().export(manifest: manifest) }
     func sendSubscriptionEmail(plan: String) async {}

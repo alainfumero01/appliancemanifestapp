@@ -83,6 +83,10 @@ struct NewManifestView: View {
                             if didSave {
                                 didExplicitlySaveManifest = true
                                 clearLocalDraft()
+                                pendingPhotoLookup = nil
+                                if existingManifest == nil {
+                                    viewModel.resetNewManifestComposer()
+                                }
                                 isPresented = false
                             }
                         }
@@ -541,6 +545,22 @@ struct NewManifestView: View {
                                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                                         .stroke(EnterpriseTheme.accent.opacity(0.3), lineWidth: 0.5)
                                 }
+
+                                Button(role: .destructive) {
+                                    viewModel.removeDraft(id: draft.id)
+                                } label: {
+                                    Text("Remove")
+                                        .font(.system(size: 12, weight: .bold))
+                                }
+                                .foregroundStyle(EnterpriseTheme.danger)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(EnterpriseTheme.danger.opacity(0.10))
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(EnterpriseTheme.danger.opacity(0.22), lineWidth: 0.5)
+                                }
                             }
                         }
                     }
@@ -605,6 +625,7 @@ struct NewManifestView: View {
             let detectedModel = try await viewModel.detectModelNumberForPhoto(data: data)
             pendingPhotoLookup = PendingPhotoLookup(
                 imageData: data,
+                detectedModelNumber: detectedModel,
                 modelNumber: detectedModel,
                 helperText: "Confirm the detected model number before LoadScan looks up the product."
             )
@@ -620,6 +641,7 @@ struct NewManifestView: View {
 
             pendingPhotoLookup = PendingPhotoLookup(
                 imageData: data,
+                detectedModelNumber: "",
                 modelNumber: "",
                 helperText: "LoadScan could not confidently read the sticker. Enter the model number manually to continue."
             )
@@ -628,7 +650,11 @@ struct NewManifestView: View {
 
     private func confirmScannedPhoto(_ pending: PendingPhotoLookup) async -> Bool {
         do {
-            try await viewModel.lookupScannedModelNumber(pending.modelNumber, imageData: pending.imageData)
+            try await viewModel.lookupScannedModelNumber(
+                pending.modelNumber,
+                imageData: pending.imageData,
+                observedModelNumber: pending.detectedModelNumber
+            )
             pendingPhotoLookup = nil
             return true
         } catch AppError.notAppliance {
@@ -684,6 +710,7 @@ private struct ScanningOverlay: View {
 private struct PendingPhotoLookup: Identifiable, Equatable {
     let id = UUID()
     let imageData: Data
+    let detectedModelNumber: String
     var modelNumber: String
     let helperText: String
 }

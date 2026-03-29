@@ -1,3 +1,5 @@
+import { normalizeModelNumber } from "../_shared/catalogLookup.ts";
+
 Deno.serve(async (request) => {
   if (request.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
@@ -96,10 +98,7 @@ If you cannot confidently identify a model number, return:
   let modelNumber = "";
   try {
     const parsed = JSON.parse(content);
-    modelNumber = String(parsed.modelNumber ?? "")
-      .toUpperCase()
-      .replace(/[^A-Z0-9]/g, "")
-      .trim();
+    modelNumber = normalizeModelNumber(parsed.modelNumber);
   } catch {
     modelNumber = "";
   }
