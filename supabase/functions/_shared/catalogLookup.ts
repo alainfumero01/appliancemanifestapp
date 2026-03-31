@@ -1,8 +1,16 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
+import {
+  deriveApplianceCategory,
+  deriveBrand,
+  normalizeApplianceCategory,
+} from "./sellerInventory.ts";
+
 export type LookupResponse = {
   normalizedModelNumber: string;
   productName: string;
+  brand: string | null;
+  applianceCategory: string | null;
   msrp: number;
   source: string;
   confidence: number;
@@ -12,6 +20,8 @@ export type LookupResponse = {
 type CatalogProductRow = {
   normalized_model_number: string;
   product_name: string;
+  brand: string | null;
+  appliance_category: string | null;
   msrp: number;
   source: string | null;
   confidence: number;
@@ -20,6 +30,8 @@ type CatalogProductRow = {
 type ProductLookupCandidateRow = {
   normalized_model_number: string;
   product_name: string;
+  brand: string | null;
+  appliance_category: string | null;
   msrp: number;
   source: string | null;
   confidence: number;
@@ -77,6 +89,8 @@ function toCatalogResponse(row: CatalogProductRow, status: string): LookupRespon
   return {
     normalizedModelNumber: row.normalized_model_number,
     productName: row.product_name,
+    brand: row.brand ?? deriveBrand(row.product_name),
+    applianceCategory: normalizeApplianceCategory(row.appliance_category) ?? deriveApplianceCategory(row.product_name),
     msrp: Number(row.msrp ?? 0),
     source: String(row.source || "catalog-cache"),
     confidence: Number(row.confidence ?? 0),
@@ -88,6 +102,8 @@ function toCandidateResponse(row: ProductLookupCandidateRow, status: string): Lo
   return {
     normalizedModelNumber: row.normalized_model_number,
     productName: row.product_name,
+    brand: row.brand ?? deriveBrand(row.product_name),
+    applianceCategory: normalizeApplianceCategory(row.appliance_category) ?? deriveApplianceCategory(row.product_name),
     msrp: Number(row.msrp ?? 0),
     source: String(row.source || FRESH_AI_SOURCE),
     confidence: Number(row.confidence ?? 0),
@@ -101,7 +117,7 @@ async function fetchTrustedCatalogRow(
 ): Promise<CatalogProductRow | null> {
   const { data, error } = await supabase
     .from("product_catalog")
-    .select("normalized_model_number, product_name, msrp, source, confidence")
+    .select("normalized_model_number, product_name, brand, appliance_category, msrp, source, confidence")
     .eq("normalized_model_number", normalizedModelNumber)
     .maybeSingle<CatalogProductRow>();
 
@@ -122,7 +138,7 @@ async function fetchProvisionalCandidateRow(
 ): Promise<ProductLookupCandidateRow | null> {
   const { data, error } = await supabase
     .from("product_lookup_candidates")
-    .select("normalized_model_number, product_name, msrp, source, confidence, verification_state, hit_count")
+    .select("normalized_model_number, product_name, brand, appliance_category, msrp, source, confidence, verification_state, hit_count")
     .eq("normalized_model_number", normalizedModelNumber)
     .neq("verification_state", "rejected")
     .maybeSingle<ProductLookupCandidateRow>();
@@ -164,7 +180,7 @@ async function touchCandidate(
       last_used_at: now,
     })
     .eq("normalized_model_number", candidate.normalized_model_number)
-    .select("normalized_model_number, product_name, msrp, source, confidence, verification_state, hit_count")
+    .select("normalized_model_number, product_name, brand, appliance_category, msrp, source, confidence, verification_state, hit_count")
     .single<ProductLookupCandidateRow>();
 
   if (error) {
@@ -192,14 +208,19 @@ export async function upsertCatalogEntry(
   entry: {
     normalizedModelNumber: string;
     productName: string;
+    brand?: string | null;
+    applianceCategory?: string | null;
     msrp: number;
     source: string;
     confidence: number;
   },
 ): Promise<CatalogProductRow> {
+  const productName = String(entry.productName).trim();
   const payload = {
     normalized_model_number: normalizeModelNumber(entry.normalizedModelNumber),
-    product_name: String(entry.productName).trim(),
+    product_name: productName,
+    brand: entry.brand?.trim() || deriveBrand(productName),
+    appliance_category: normalizeApplianceCategory(entry.applianceCategory) ?? deriveApplianceCategory(productName),
     msrp: Number(entry.msrp ?? 0),
     source: canonicalConfirmedSource(entry.source),
     confidence: Number(entry.confidence ?? 0),
@@ -209,7 +230,7 @@ export async function upsertCatalogEntry(
   const { data, error } = await supabase
     .from("product_catalog")
     .upsert(payload, { onConflict: "normalized_model_number" })
-    .select("normalized_model_number, product_name, msrp, source, confidence")
+    .select("normalized_model_number, product_name, brand, appliance_category, msrp, source, confidence")
     .single<CatalogProductRow>();
 
   if (error) {
@@ -279,6 +300,8 @@ async function upsertProvisionalCandidate(
   const payload = {
     normalized_model_number: normalizeModelNumber(response.normalizedModelNumber),
     product_name: String(response.productName ?? "").trim(),
+    brand: response.brand?.trim() || deriveBrand(String(response.productName ?? "").trim()),
+    appliance_category: normalizeApplianceCategory(response.applianceCategory) ?? deriveApplianceCategory(String(response.productName ?? "").trim()),
     msrp: Number(response.msrp ?? 0),
     source: String(response.source ?? FRESH_AI_SOURCE).trim() || FRESH_AI_SOURCE,
     confidence: Number(response.confidence ?? 0),
@@ -292,7 +315,7 @@ async function upsertProvisionalCandidate(
   const { data, error } = await supabase
     .from("product_lookup_candidates")
     .upsert(payload, { onConflict: "normalized_model_number" })
-    .select("normalized_model_number, product_name, msrp, source, confidence, verification_state, hit_count")
+    .select("normalized_model_number, product_name, brand, appliance_category, msrp, source, confidence, verification_state, hit_count")
     .single<ProductLookupCandidateRow>();
 
   if (error) {
@@ -332,6 +355,8 @@ Given the model number "${normalized}", first determine if this is a home applia
 
 If it IS a home appliance, return:
 - the most likely full product name
+- the brand
+- the appliance category
 - the ORIGINAL manufacturer MSRP / list price in US dollars at full retail
 - a short source note
 - confidence
@@ -362,12 +387,14 @@ If it is NOT a home appliance, set isAppliance to false and leave other fields e
             properties: {
               isAppliance: { type: "boolean" },
               productName: { type: "string" },
+              brand: { type: "string" },
+              applianceCategory: { type: "string" },
               msrp: { type: "number" },
               priceType: { type: "string", enum: ["original_msrp", "unknown"] },
               source: { type: "string" },
               confidence: { type: "number" },
             },
-            required: ["isAppliance", "productName", "msrp", "priceType", "source", "confidence"],
+            required: ["isAppliance", "productName", "brand", "applianceCategory", "msrp", "priceType", "source", "confidence"],
             additionalProperties: false,
           },
         },
@@ -390,6 +417,8 @@ If it is NOT a home appliance, set isAppliance to false and leave other fields e
   return {
     normalizedModelNumber: normalized,
     productName: String(parsed.productName ?? "").trim(),
+    brand: String(parsed.brand ?? "").trim() || deriveBrand(String(parsed.productName ?? "").trim()),
+    applianceCategory: normalizeApplianceCategory(parsed.applianceCategory) ?? deriveApplianceCategory(String(parsed.productName ?? "").trim()),
     msrp: parsed.priceType === "original_msrp" ? Number(parsed.msrp ?? 0) : 0,
     source: FRESH_AI_SOURCE,
     confidence: Number(parsed.confidence ?? 0),

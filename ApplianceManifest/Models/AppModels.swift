@@ -17,6 +17,20 @@ struct AppUser: Codable, Equatable {
     let orgID: UUID?
 }
 
+enum AppMode: String, Codable, CaseIterable, Identifiable {
+    case wholesale
+    case seller
+
+    var id: String { rawValue }
+
+    var displayLabel: String {
+        switch self {
+        case .wholesale: return "Wholesale"
+        case .seller: return "Seller"
+        }
+    }
+}
+
 enum OrganizationSubscriptionType: String, Codable, Equatable, CaseIterable, Identifiable {
     case individual
     case enterprise
@@ -208,6 +222,8 @@ struct ManifestItem: Identifiable, Codable, Equatable {
     let manifestID: UUID
     var modelNumber: String
     var productName: String
+    var brand: String?
+    var applianceCategory: String?
     var msrp: Decimal
     var ourPrice: Decimal
     var condition: ItemCondition
@@ -256,6 +272,8 @@ enum LookupStatus: String, Codable, CaseIterable, Identifiable {
 struct CatalogProduct: Codable, Equatable {
     let normalizedModelNumber: String
     var productName: String
+    var brand: String?
+    var applianceCategory: String?
     var msrp: Decimal
     var source: String
     var confidence: Double
@@ -264,6 +282,8 @@ struct CatalogProduct: Codable, Equatable {
 struct LookupSuggestion: Codable, Equatable {
     var normalizedModelNumber: String
     var productName: String
+    var brand: String?
+    var applianceCategory: String?
     var msrp: Decimal
     var source: String
     var confidence: Double
@@ -277,6 +297,8 @@ struct DraftManifestItem: Identifiable, Equatable, Codable {
     var observedModelNumber: String?
     var modelNumber: String
     var productName: String
+    var brand: String?
+    var applianceCategory: String?
     var msrpText: String
     var ourPriceText: String
     var condition: ItemCondition
@@ -292,6 +314,8 @@ struct DraftManifestItem: Identifiable, Equatable, Codable {
         observedModelNumber: String? = nil,
         modelNumber: String = "",
         productName: String = "",
+        brand: String? = nil,
+        applianceCategory: String? = nil,
         msrpText: String = "",
         ourPriceText: String = "",
         condition: ItemCondition = .used,
@@ -306,6 +330,8 @@ struct DraftManifestItem: Identifiable, Equatable, Codable {
         self.observedModelNumber = observedModelNumber
         self.modelNumber = modelNumber
         self.productName = productName
+        self.brand = brand
+        self.applianceCategory = applianceCategory
         self.msrpText = msrpText
         self.ourPriceText = ourPriceText
         self.condition = condition
@@ -313,6 +339,232 @@ struct DraftManifestItem: Identifiable, Equatable, Codable {
         self.lookupStatus = lookupStatus
         self.source = source
         self.confidence = confidence
+    }
+}
+
+enum InventoryStatus: String, Codable, CaseIterable, Identifiable {
+    case inStock = "in_stock"
+    case listed
+    case reserved
+    case sold
+
+    var id: String { rawValue }
+
+    var displayLabel: String {
+        switch self {
+        case .inStock: return "In Stock"
+        case .listed: return "Listed"
+        case .reserved: return "Reserved"
+        case .sold: return "Sold"
+        }
+    }
+
+    var isAvailableForQuickLoad: Bool {
+        switch self {
+        case .inStock, .listed: return true
+        case .reserved, .sold: return false
+        }
+    }
+}
+
+struct InventoryUnit: Identifiable, Codable, Equatable {
+    let id: UUID
+    let orgID: UUID
+    var sourceManifestID: UUID?
+    var sourceManifestItemID: UUID?
+    var sourceManifestItemIndex: Int?
+    var modelNumber: String
+    var productName: String
+    var brand: String?
+    var applianceCategory: String?
+    var msrp: Decimal
+    var askingPrice: Decimal
+    var costBasis: Decimal?
+    var soldPrice: Decimal?
+    var condition: ItemCondition
+    var status: InventoryStatus
+    var photoPath: String?
+    let createdAt: Date
+    var updatedAt: Date
+    var listedAt: Date?
+    var reservedAt: Date?
+    var soldAt: Date?
+
+    var isAvailableForQuickLoad: Bool { status.isAvailableForQuickLoad }
+    var displayBrand: String { brand?.nilIfBlank ?? productName.brandFallback }
+    var displayCategory: String { applianceCategory?.categoryDisplayName ?? "Other" }
+    var realizedRevenue: Decimal { soldPrice ?? 0 }
+    var realizedProfit: Decimal? {
+        guard let soldPrice, let costBasis else { return nil }
+        return soldPrice - costBasis
+    }
+}
+
+struct InventoryGroupRow: Identifiable, Equatable {
+    let brand: String
+    let applianceCategory: String
+    let modelNumber: String
+    let productName: String
+    let condition: ItemCondition
+    let askingPrice: Decimal
+    let msrp: Decimal
+    let availableUnits: [InventoryUnit]
+    let reservedUnits: [InventoryUnit]
+    let soldUnits: [InventoryUnit]
+
+    var id: String {
+        [
+            applianceCategory,
+            modelNumber,
+            condition.rawValue,
+            NSDecimalNumber(decimal: askingPrice).stringValue
+        ].joined(separator: "|")
+    }
+
+    var availableCount: Int { availableUnits.count }
+    var reservedCount: Int { reservedUnits.count }
+    var soldCount: Int { soldUnits.count }
+    var representativePhotoPath: String? {
+        availableUnits.first?.photoPath ?? reservedUnits.first?.photoPath ?? soldUnits.first?.photoPath
+    }
+}
+
+enum SellerAnalyticsWindow: String, CaseIterable, Identifiable {
+    case sevenDays = "7D"
+    case thirtyDays = "30D"
+    case ninetyDays = "90D"
+    case all = "All"
+
+    var id: String { rawValue }
+
+    var dayCount: Int? {
+        switch self {
+        case .sevenDays: return 7
+        case .thirtyDays: return 30
+        case .ninetyDays: return 90
+        case .all: return nil
+        }
+    }
+}
+
+struct SellerAnalytics {
+    var inStockCount: Int
+    var listedCount: Int
+    var reservedCount: Int
+    var soldCount: Int
+    var activeInventoryValue: Decimal
+    var soldRevenue: Decimal
+    var soldProfit: Decimal?
+    var averageDaysToSell: Double?
+    var stale30Count: Int
+    var stale60Count: Int
+    var stale90Count: Int
+    var topBrands: [(String, Int)]
+    var topCategories: [(String, Int)]
+    var topModels: [(String, Int)]
+}
+
+extension Array where Element == InventoryUnit {
+    func groupedInventoryRows() -> [InventoryGroupRow] {
+        let grouped = Dictionary(grouping: self) { unit in
+            [
+                unit.applianceCategory?.categoryDisplayName ?? "Other",
+                unit.modelNumber,
+                unit.condition.rawValue,
+                NSDecimalNumber(decimal: unit.askingPrice).stringValue
+            ].joined(separator: "|")
+        }
+
+        return grouped.values.map { units in
+            let available = units.filter { $0.status == .inStock || $0.status == .listed }
+            let reserved = units.filter { $0.status == .reserved }
+            let sold = units.filter { $0.status == .sold }
+            let sample = available.first ?? reserved.first ?? sold.first!
+            return InventoryGroupRow(
+                brand: sample.displayBrand,
+                applianceCategory: sample.displayCategory,
+                modelNumber: sample.modelNumber,
+                productName: sample.productName,
+                condition: sample.condition,
+                askingPrice: sample.askingPrice,
+                msrp: sample.msrp,
+                availableUnits: available.sorted(by: { $0.createdAt < $1.createdAt }),
+                reservedUnits: reserved.sorted(by: { $0.createdAt < $1.createdAt }),
+                soldUnits: sold.sorted(by: { $0.createdAt < $1.createdAt })
+            )
+        }
+        .sorted {
+            if $0.applianceCategory != $1.applianceCategory {
+                return $0.applianceCategory < $1.applianceCategory
+            }
+            if $0.brand != $1.brand {
+                return $0.brand < $1.brand
+            }
+            return $0.productName < $1.productName
+        }
+    }
+
+    func sellerAnalytics(window: SellerAnalyticsWindow, now: Date = Date()) -> SellerAnalytics {
+        let availableUnits = filter { $0.status == .inStock || $0.status == .listed || $0.status == .reserved }
+        let soldUnits: [InventoryUnit]
+        if let dayCount = window.dayCount {
+            let threshold = Calendar.current.date(byAdding: .day, value: -dayCount, to: now) ?? now
+            soldUnits = filter { $0.status == .sold && ($0.soldAt ?? $0.updatedAt) >= threshold }
+        } else {
+            soldUnits = filter { $0.status == .sold }
+        }
+
+        let profitValues = soldUnits.compactMap(\.realizedProfit)
+        let datedSoldUnits = soldUnits.compactMap { unit -> Double? in
+            guard let soldAt = unit.soldAt else { return nil }
+            return soldAt.timeIntervalSince(unit.createdAt) / 86_400
+        }
+
+        func topCounts(for values: [String]) -> [(String, Int)] {
+            Dictionary(grouping: values, by: { $0 })
+                .map { ($0.key, $0.value.count) }
+                .sorted {
+                    if $0.1 != $1.1 { return $0.1 > $1.1 }
+                    return $0.0 < $1.0
+                }
+                .prefix(5)
+                .map { $0 }
+        }
+
+        return SellerAnalytics(
+            inStockCount: filter { $0.status == .inStock }.count,
+            listedCount: filter { $0.status == .listed }.count,
+            reservedCount: filter { $0.status == .reserved }.count,
+            soldCount: soldUnits.count,
+            activeInventoryValue: availableUnits.reduce(0) { $0 + $1.askingPrice },
+            soldRevenue: soldUnits.reduce(0) { $0 + ($1.soldPrice ?? 0) },
+            soldProfit: profitValues.isEmpty ? nil : profitValues.reduce(0, +),
+            averageDaysToSell: datedSoldUnits.isEmpty ? nil : datedSoldUnits.reduce(0, +) / Double(datedSoldUnits.count),
+            stale30Count: availableUnits.filter { now.timeIntervalSince($0.createdAt) >= 30 * 86_400 }.count,
+            stale60Count: availableUnits.filter { now.timeIntervalSince($0.createdAt) >= 60 * 86_400 }.count,
+            stale90Count: availableUnits.filter { now.timeIntervalSince($0.createdAt) >= 90 * 86_400 }.count,
+            topBrands: topCounts(for: soldUnits.map(\.displayBrand)),
+            topCategories: topCounts(for: soldUnits.map(\.displayCategory)),
+            topModels: topCounts(for: soldUnits.map(\.modelNumber))
+        )
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    var brandFallback: String {
+        split(separator: " ").first.map(String.init) ?? self
+    }
+
+    var categoryDisplayName: String {
+        replacingOccurrences(of: "-", with: " ")
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst().lowercased() }
+            .joined(separator: " ")
     }
 }
 

@@ -281,6 +281,41 @@ struct StatusBadge: View {
     }
 }
 
+struct AppModePicker: View {
+    @Binding var selection: AppMode
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(AppMode.allCases) { mode in
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                        selection = mode
+                    }
+                } label: {
+                    Text(mode.displayLabel)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(selection == mode ? Color.white : EnterpriseTheme.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(selection == mode ? EnterpriseTheme.accent : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(5)
+        .background(EnterpriseTheme.surfacePrimary)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(EnterpriseTheme.border, lineWidth: 1)
+        }
+        .shadow(color: EnterpriseTheme.shadow, radius: 2, x: 0, y: 1)
+    }
+}
+
 // MARK: - Button Styles
 
 struct EnterprisePrimaryButtonStyle: ButtonStyle {

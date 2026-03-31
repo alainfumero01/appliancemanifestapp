@@ -23,6 +23,8 @@ Deno.serve(async (request) => {
 
   const normalizedModelNumber = normalizeModelNumber(body.normalizedModelNumber);
   const productName = String(body.productName ?? "").trim();
+  const brand = typeof body.brand === "string" ? body.brand.trim() : null;
+  const applianceCategory = typeof body.applianceCategory === "string" ? body.applianceCategory.trim() : null;
   const msrp = Number(body.msrp ?? 0);
   const source = String(body.source ?? OPERATOR_CONFIRMED_SOURCE).trim() || OPERATOR_CONFIRMED_SOURCE;
   const confidence = Number(body.confidence ?? 0);
@@ -49,6 +51,8 @@ Deno.serve(async (request) => {
     const data = await upsertCatalogEntry(supabase, {
       normalizedModelNumber,
       productName,
+      brand,
+      applianceCategory,
       msrp,
       source,
       confidence,
@@ -59,6 +63,8 @@ Deno.serve(async (request) => {
     return Response.json({
       normalizedModelNumber: data.normalized_model_number,
       productName: data.product_name,
+      brand: data.brand ?? null,
+      applianceCategory: data.appliance_category ?? null,
       msrp: Number(data.msrp),
       source: String(data.source || OPERATOR_CONFIRMED_SOURCE),
       confidence: Number(data.confidence ?? 0),

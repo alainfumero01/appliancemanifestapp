@@ -43,7 +43,12 @@ struct RootView: View {
             }
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbarColorScheme(.light, for: .navigationBar)
-            .tabItem { Label("Loads", systemImage: "doc.text.magnifyingglass") }
+            .tabItem {
+                Label(
+                    appViewModel.appMode == .seller ? "Inventory" : "Loads",
+                    systemImage: appViewModel.appMode == .seller ? "shippingbox.fill" : "doc.text.magnifyingglass"
+                )
+            }
             .tag(1)
 
             NavigationStack {

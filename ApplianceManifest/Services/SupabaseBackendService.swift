@@ -14,6 +14,7 @@ protocol BackendServicing {
     func removeOrgMember(_ member: OrganizationMember) async throws
     func syncAppStoreSubscription(productID: String, transactionJWS: String?) async throws -> OrganizationEntitlement
     func fetchManifests() async throws -> [Manifest]
+    func fetchInventory() async throws -> [InventoryUnit]
     func createManifest(title: String, loadReference: String, draftItems: [DraftManifestItem], loadCost: Decimal?, targetMarginPct: Decimal?) async throws -> Manifest
     func appendItems(_ draftItems: [DraftManifestItem], to manifest: Manifest) async throws -> Manifest
     func updateManifest(_ manifest: Manifest) async throws -> Manifest
@@ -30,6 +31,11 @@ protocol BackendServicing {
     func sendPasswordReset(email: String) async throws
     func joinOrgWithInvite(code: String) async throws -> OrganizationEntitlement
     func fetchInviteCodes() async throws -> [InviteCode]
+    func createInventoryUnits(from draft: DraftManifestItem, quantity: Int, askingPrice: Decimal, costBasis: Decimal?, status: InventoryStatus) async throws -> [InventoryUnit]
+    func updateInventoryUnit(_ unit: InventoryUnit) async throws -> InventoryUnit
+    func createQuickLoad(title: String, loadReference: String, inventoryUnitIDs: [UUID]) async throws -> Manifest
+    func syncManifestInventory(manifestID: UUID?) async throws
+    func syncLinkedInventoryStatus(manifestID: UUID) async throws
 }
 
 final class SupabaseBackendService: BackendServicing {
@@ -308,6 +314,23 @@ final class SupabaseBackendService: BackendServicing {
         .sorted(by: { $0.updatedAt > $1.updatedAt })
     }
 
+    func fetchInventory() async throws -> [InventoryUnit] {
+        let session = try await requireSession()
+        let url = environment.supabaseURL
+            .appending(path: "rest/v1/inventory_units")
+            .appending(queryItems: [
+                URLQueryItem(name: "select", value: InventoryUnitRecord.selectColumns),
+                URLQueryItem(name: "order", value: "updated_at.desc")
+            ])
+
+        let records: [InventoryUnitRecord] = try await httpClient.send(
+            to: url,
+            method: "GET",
+            headers: authenticatedHeaders(token: session.accessToken, prefer: nil)
+        )
+        return records.map { $0.makeInventoryUnit() }
+    }
+
     private func fetchOwnerEmails(_ ids: [UUID], session: UserSession) async throws -> [UUID: String] {
         guard !ids.isEmpty else { return [:] }
         let idList = ids.map { $0.uuidString }.joined(separator: ",")
@@ -516,6 +539,399 @@ final class SupabaseBackendService: BackendServicing {
         return copy
     }
 
+    func createInventoryUnits(
+        from draft: DraftManifestItem,
+        quantity: Int,
+        askingPrice: Decimal,
+        costBasis: Decimal?,
+        status: InventoryStatus
+    ) async throws -> [InventoryUnit] {
+        guard quantity > 0 else { return [] }
+
+        let session = try await requireSession()
+        let normalizedModel = ModelNumberNormalizer.normalize(draft.modelNumber)
+        let trimmedName = draft.productName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedModel.isEmpty, !trimmedName.isEmpty else {
+            throw AppError.lookupFailed("Confirm the model number and product name before saving inventory.")
+        }
+
+        if draft.lookupStatus == .confirmed || draft.lookupStatus == .cached {
+            let suggestion = LookupSuggestion(
+                normalizedModelNumber: normalizedModel,
+                productName: trimmedName,
+                brand: draft.brand,
+                applianceCategory: draft.applianceCategory,
+                msrp: Decimal(string: draft.msrpText) ?? 0,
+                source: draft.source.isEmpty ? "operator-confirmed" : draft.source,
+                confidence: draft.confidence,
+                status: .confirmed
+            )
+            try? await confirmProduct(suggestion, aliasModelNumbers: aliasModelNumbers(for: draft))
+        }
+
+        let now = Date()
+        let photoPath: String?
+        if draft.imageData.isEmpty {
+            photoPath = nil
+        } else {
+            photoPath = try await uploadInventoryPhoto(data: draft.imageData, sharedID: UUID())
+        }
+
+        do {
+        let inserts = (0..<quantity).map { _ in
+            InventoryUnitInsert(
+                id: UUID(),
+                org_id: session.user.orgID,
+                source_manifest_id: nil,
+                source_manifest_item_id: nil,
+                source_manifest_item_index: nil,
+                model_number: normalizedModel,
+                product_name: trimmedName,
+                brand: draft.brand?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank,
+                appliance_category: draft.applianceCategory?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank,
+                msrp: Decimal(string: draft.msrpText) ?? 0,
+                asking_price: askingPrice,
+                cost_basis: costBasis,
+                sold_price: nil,
+                condition: draft.condition.rawValue,
+                status: status.rawValue,
+                photo_path: photoPath,
+                listed_at: status == .listed ? now : nil,
+                reserved_at: status == .reserved ? now : nil,
+                sold_at: status == .sold ? now : nil
+            )
+        }
+
+        let records: [InventoryUnitRecord] = try await httpClient.send(
+            to: environment.supabaseURL.appending(path: "rest/v1/inventory_units"),
+            method: "POST",
+            headers: authenticatedHeaders(token: session.accessToken, prefer: "return=representation"),
+            body: inserts
+        )
+        return records.map { $0.makeInventoryUnit() }
+        } catch {
+            if let photoPath {
+                try? await deletePhotos(at: [photoPath], token: session.accessToken)
+            }
+            throw error
+        }
+    }
+
+    func updateInventoryUnit(_ unit: InventoryUnit) async throws -> InventoryUnit {
+        let session = try await requireSession()
+        let url = environment.supabaseURL
+            .appending(path: "rest/v1/inventory_units")
+            .appending(queryItems: [
+                URLQueryItem(name: "id", value: "eq.\(unit.id.uuidString)"),
+                URLQueryItem(name: "select", value: InventoryUnitRecord.selectColumns)
+            ])
+
+        let update = InventoryUnitUpdate(
+            model_number: ModelNumberNormalizer.normalize(unit.modelNumber),
+            product_name: unit.productName.trimmingCharacters(in: .whitespacesAndNewlines),
+            brand: unit.brand?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank,
+            appliance_category: unit.applianceCategory?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank,
+            msrp: unit.msrp,
+            asking_price: unit.askingPrice,
+            cost_basis: unit.costBasis,
+            sold_price: unit.soldPrice,
+            condition: unit.condition.rawValue,
+            status: unit.status.rawValue,
+            photo_path: unit.photoPath,
+            listed_at: unit.status == .listed ? (unit.listedAt ?? Date()) : nil,
+            reserved_at: unit.status == .reserved ? (unit.reservedAt ?? Date()) : nil,
+            sold_at: unit.status == .sold ? (unit.soldAt ?? Date()) : nil
+        )
+
+        let records: [InventoryUnitRecord] = try await httpClient.send(
+            to: url,
+            method: "PATCH",
+            headers: authenticatedHeaders(token: session.accessToken, prefer: "return=representation"),
+            body: update
+        )
+
+        guard let record = records.first else {
+            throw AppError.lookupFailed("We couldn't update that inventory unit right now.")
+        }
+        return record.makeInventoryUnit()
+    }
+
+    func createQuickLoad(title: String, loadReference: String, inventoryUnitIDs: [UUID]) async throws -> Manifest {
+        let session = try await requireSession()
+        let selectedUnits = try await fetchInventoryUnits(ids: inventoryUnitIDs, token: session.accessToken)
+        guard selectedUnits.count == inventoryUnitIDs.count else {
+            throw AppError.lookupFailed("Some selected inventory units were not found.")
+        }
+        guard selectedUnits.allSatisfy(\.isAvailableForQuickLoad) else {
+            throw AppError.lookupFailed("Only in-stock or listed inventory can be added to a quick load.")
+        }
+
+        let manifestID = UUID()
+        let now = Date()
+        let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Inventory Load" : title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedLoadReference = loadReference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "LOAD-\(Int(now.timeIntervalSince1970))"
+            : loadReference.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let manifestInsert = ManifestInsert(
+            id: manifestID,
+            title: resolvedTitle,
+            load_reference: resolvedLoadReference,
+            status: ManifestStatus.draft.rawValue,
+            org_id: session.user.orgID,
+            created_at: now,
+            updated_at: now,
+            load_cost: nil,
+            target_margin_pct: nil
+        )
+
+        do {
+            _ = try await httpClient.send(
+                to: environment.supabaseURL.appending(path: "rest/v1/manifests"),
+                method: "POST",
+                headers: authenticatedHeaders(token: session.accessToken, prefer: "return=representation"),
+                body: [manifestInsert]
+            ) as [ManifestRecord]
+
+            let buckets = Dictionary(grouping: selectedUnits) { unit in
+                [
+                    unit.modelNumber,
+                    unit.productName,
+                    unit.brand ?? "",
+                    unit.applianceCategory ?? "",
+                    unit.condition.rawValue,
+                    unit.photoPath ?? "",
+                    NSDecimalNumber(decimal: unit.msrp).stringValue,
+                    NSDecimalNumber(decimal: unit.askingPrice).stringValue
+                ].joined(separator: "|")
+            }
+
+            let itemInserts: [ManifestItemInsert] = buckets.values.map { units in
+                let sample = units[0]
+                return ManifestItemInsert(
+                    id: UUID(),
+                    manifest_id: manifestID,
+                    model_number: sample.modelNumber,
+                    product_name: sample.productName,
+                    brand: sample.brand,
+                    appliance_category: sample.applianceCategory,
+                    msrp: sample.msrp,
+                    our_price: sample.askingPrice,
+                    condition: sample.condition.rawValue,
+                    quantity: units.count,
+                    photo_path: sample.photoPath,
+                    lookup_status: LookupStatus.confirmed.rawValue,
+                    created_at: now
+                )
+            }
+
+            let insertedItems: [ManifestItemRecord] = try await httpClient.send(
+                to: environment.supabaseURL.appending(path: "rest/v1/manifest_items"),
+                method: "POST",
+                headers: authenticatedHeaders(token: session.accessToken, prefer: "return=representation"),
+                body: itemInserts
+            )
+
+            let insertedItemsByKey = Dictionary(uniqueKeysWithValues: insertedItems.map { record in
+                let key = [
+                    record.model_number,
+                    record.product_name,
+                    record.brand ?? "",
+                    record.appliance_category ?? "",
+                    record.condition ?? "",
+                    record.photo_path ?? "",
+                    NSDecimalNumber(decimal: record.msrp).stringValue,
+                    NSDecimalNumber(decimal: record.our_price ?? 0).stringValue
+                ].joined(separator: "|")
+                return (key, record)
+            })
+
+            let linkInserts: [ManifestInventoryLinkInsert] = selectedUnits.compactMap { unit in
+                let key = [
+                    unit.modelNumber,
+                    unit.productName,
+                    unit.brand ?? "",
+                    unit.applianceCategory ?? "",
+                    unit.condition.rawValue,
+                    unit.photoPath ?? "",
+                    NSDecimalNumber(decimal: unit.msrp).stringValue,
+                    NSDecimalNumber(decimal: unit.askingPrice).stringValue
+                ].joined(separator: "|")
+                guard let itemRecord = insertedItemsByKey[key] else { return nil }
+                return ManifestInventoryLinkInsert(
+                    manifest_id: manifestID,
+                    manifest_item_id: itemRecord.id,
+                    inventory_unit_id: unit.id,
+                    restore_status: unit.status.rawValue,
+                    release_on_delete: true
+                )
+            }
+
+            _ = try await httpClient.send(
+                to: environment.supabaseURL.appending(path: "rest/v1/manifest_inventory_links"),
+                method: "POST",
+                headers: authenticatedHeaders(token: session.accessToken, prefer: "return=representation"),
+                body: linkInserts
+            ) as [ManifestInventoryLinkRecord]
+
+            try await patchInventoryUnits(
+                ids: selectedUnits.map(\.id),
+                update: InventoryUnitStatusPatch(
+                    status: InventoryStatus.reserved.rawValue,
+                    reserved_at: now,
+                    sold_at: nil,
+                    sold_price: nil
+                ),
+                token: session.accessToken
+            )
+        } catch {
+            try? await deleteManifestByID(manifestID, token: session.accessToken)
+            throw AppError.lookupFailed("We couldn't create that quick load right now. Please try again.")
+        }
+
+        guard let manifestRecord = try await fetchManifestRecord(id: manifestID, token: session.accessToken) else {
+            throw AppError.lookupFailed("The quick load was created, but we couldn't load it yet.")
+        }
+        let items = try await fetchManifestItems(manifestID: manifestID, token: session.accessToken)
+        return manifestRecord.makeManifest(items: items, ownerEmail: session.user.email)
+    }
+
+    func syncManifestInventory(manifestID: UUID?) async throws {
+        let session = try await requireSession()
+        let manifests = try await fetchManifests()
+        let manifestsToSync: [Manifest]
+        if let manifestID {
+            manifestsToSync = manifests.filter { $0.id == manifestID }
+        } else {
+            manifestsToSync = manifests
+        }
+
+        let existingUnits = try await fetchInventoryUnits(ids: nil, token: session.accessToken)
+        let existingUnitMap: [String: InventoryUnit] = Dictionary(uniqueKeysWithValues: existingUnits.compactMap { unit in
+            guard let itemID = unit.sourceManifestItemID,
+                  let index = unit.sourceManifestItemIndex else { return nil }
+            return ("\(itemID.uuidString):\(index)", unit)
+        })
+
+        for manifest in manifestsToSync {
+            let totalMSRP = manifest.items.reduce(0) { $0 + ($1.msrp * Decimal($1.quantity)) }
+            for item in manifest.items {
+                let derivedBrand = item.brand?.nilIfBlank ?? deriveBrand(from: item.productName)
+                let derivedCategory = item.applianceCategory?.nilIfBlank ?? deriveApplianceCategory(from: item.productName)
+                let itemMSRPTotal = item.msrp * Decimal(item.quantity)
+                let unitCostBasis: Decimal?
+                if let loadCost = manifest.loadCost, totalMSRP > 0, item.quantity > 0 {
+                    unitCostBasis = (loadCost * (itemMSRPTotal / totalMSRP)) / Decimal(item.quantity)
+                } else {
+                    unitCostBasis = nil
+                }
+
+                for index in 0..<item.quantity {
+                    let key = "\(item.id.uuidString):\(index)"
+                    if let existing = existingUnitMap[key] {
+                        var update = InventoryUnitPartialUpdate()
+                        if existing.brand?.nilIfBlank == nil, let derivedBrand {
+                            update.brand = derivedBrand
+                        }
+                        if existing.applianceCategory?.nilIfBlank == nil, let derivedCategory {
+                            update.appliance_category = derivedCategory
+                        }
+                        if existing.askingPrice == 0, item.ourPrice > 0 {
+                            update.asking_price = item.ourPrice
+                        }
+                        if manifest.status == .sold, existing.status != InventoryStatus.sold {
+                            update.status = InventoryStatus.sold.rawValue
+                            update.sold_price = item.ourPrice
+                            update.sold_at = manifest.updatedAt
+                        }
+                        if update.hasChanges {
+                            try await patchInventoryUnit(id: existing.id, update: update, token: session.accessToken)
+                        }
+                        continue
+                    }
+
+                    let insert = InventoryUnitInsert(
+                        id: UUID(),
+                        org_id: manifest.orgID,
+                        source_manifest_id: manifest.id,
+                        source_manifest_item_id: item.id,
+                        source_manifest_item_index: index,
+                        model_number: item.modelNumber,
+                        product_name: item.productName,
+                        brand: derivedBrand,
+                        appliance_category: derivedCategory,
+                        msrp: item.msrp,
+                        asking_price: item.ourPrice,
+                        cost_basis: unitCostBasis,
+                        sold_price: manifest.status == .sold ? item.ourPrice : nil,
+                        condition: item.condition.rawValue,
+                        status: manifest.status == .sold ? InventoryStatus.sold.rawValue : InventoryStatus.inStock.rawValue,
+                        photo_path: item.photoPath,
+                        listed_at: nil,
+                        reserved_at: nil,
+                        sold_at: manifest.status == .sold ? manifest.updatedAt : nil
+                    )
+
+                    _ = try await httpClient.send(
+                        to: environment.supabaseURL.appending(path: "rest/v1/inventory_units"),
+                        method: "POST",
+                        headers: authenticatedHeaders(token: session.accessToken, prefer: "return=representation"),
+                        body: [insert]
+                    ) as [InventoryUnitRecord]
+                }
+            }
+        }
+    }
+
+    func syncLinkedInventoryStatus(manifestID: UUID) async throws {
+        let session = try await requireSession()
+        guard let manifest = try await fetchManifestRecord(id: manifestID, token: session.accessToken)?.makeManifest(items: try await fetchManifestItems(manifestID: manifestID, token: session.accessToken), ownerEmail: session.user.email) else {
+            return
+        }
+
+        let links = try await fetchManifestInventoryLinks(manifestID: manifestID, token: session.accessToken)
+        guard !links.isEmpty else { return }
+
+        let priceByItemID = Dictionary(uniqueKeysWithValues: manifest.items.map { ($0.id, $0.ourPrice) })
+        let now = Date()
+
+        if manifest.status == .sold {
+            for link in links {
+                try await patchInventoryUnit(
+                    id: link.inventory_unit_id,
+                    update: InventoryUnitPartialUpdate(
+                        status: InventoryStatus.sold.rawValue,
+                        reserved_at: nil,
+                        sold_price: priceByItemID[link.manifest_item_id],
+                        sold_at: now
+                    ),
+                    token: session.accessToken
+                )
+            }
+            try await patchManifestInventoryLinks(
+                manifestID: manifestID,
+                update: ManifestInventoryLinkUpdate(release_on_delete: false),
+                token: session.accessToken
+            )
+        } else {
+            try await patchInventoryUnits(
+                ids: links.map(\.inventory_unit_id),
+                update: InventoryUnitStatusPatch(
+                    status: InventoryStatus.reserved.rawValue,
+                    reserved_at: now,
+                    sold_at: nil,
+                    sold_price: nil
+                ),
+                token: session.accessToken
+            )
+            try await patchManifestInventoryLinks(
+                manifestID: manifestID,
+                update: ManifestInventoryLinkUpdate(release_on_delete: true),
+                token: session.accessToken
+            )
+        }
+    }
+
     func ingestSticker(imageData: Data) async throws -> LookupSuggestion {
         struct IngestRequest: Encodable { let imageBase64: String }
 
@@ -544,6 +960,8 @@ final class SupabaseBackendService: BackendServicing {
                     let suggestion = LookupSuggestion(
                         normalizedModelNumber: normalized,
                         productName: draft.productName,
+                        brand: draft.brand,
+                        applianceCategory: draft.applianceCategory,
                         msrp: Decimal(string: draft.msrpText) ?? 0,
                         source: draft.source.isEmpty ? "operator-confirmed" : draft.source,
                         confidence: draft.confidence,
@@ -571,6 +989,8 @@ final class SupabaseBackendService: BackendServicing {
                     manifest_id: manifestID,
                     model_number: normalized,
                     product_name: draft.productName,
+                    brand: draft.brand,
+                    appliance_category: draft.applianceCategory,
                     msrp: Decimal(string: draft.msrpText) ?? 0,
                     our_price: Decimal(string: draft.ourPriceText) ?? 0,
                     condition: draft.condition.rawValue,
@@ -669,6 +1089,8 @@ final class SupabaseBackendService: BackendServicing {
         struct ConfirmProductRequest: Encodable {
             let normalizedModelNumber: String
             let productName: String
+            let brand: String?
+            let applianceCategory: String?
             let msrp: Decimal
             let source: String
             let confidence: Double
@@ -678,6 +1100,8 @@ final class SupabaseBackendService: BackendServicing {
         let payload = ConfirmProductRequest(
             normalizedModelNumber: suggestion.normalizedModelNumber,
             productName: suggestion.productName,
+            brand: suggestion.brand?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank,
+            applianceCategory: suggestion.applianceCategory?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank,
             msrp: suggestion.msrp,
             source: suggestion.source,
             confidence: suggestion.confidence
@@ -698,6 +1122,8 @@ final class SupabaseBackendService: BackendServicing {
         let update = ManifestItemUpdate(
             model_number: item.modelNumber,
             product_name: item.productName,
+            brand: item.brand,
+            appliance_category: item.applianceCategory,
             msrp: item.msrp,
             our_price: item.ourPrice,
             condition: item.condition.rawValue,
@@ -808,6 +1234,25 @@ final class SupabaseBackendService: BackendServicing {
         return objectPath
     }
 
+    private func uploadInventoryPhoto(data: Data, sharedID: UUID) async throws -> String {
+        let session = try await requireSession()
+        let objectPath = "inventory/\(sharedID.uuidString).jpg"
+        let url = environment.supabaseURL.appending(path: "storage/v1/object/sticker-photos/\(objectPath)")
+
+        try await httpClient.sendRaw(
+            to: url,
+            method: "POST",
+            headers: authenticatedHeaders(
+                token: session.accessToken,
+                prefer: nil,
+                contentType: "image/jpeg"
+            ),
+            body: data
+        )
+
+        return objectPath
+    }
+
     private func fetchManifestItems() async throws -> [ManifestItem] {
         let session = try await requireSession()
         let url = environment.supabaseURL.appending(path: "rest/v1/manifest_items")
@@ -849,6 +1294,42 @@ final class SupabaseBackendService: BackendServicing {
             headers: authenticatedHeaders(token: token, prefer: nil)
         )
         return records.map { $0.makeManifestItem() }
+    }
+
+    private func fetchInventoryUnits(ids: [UUID]?, token: String) async throws -> [InventoryUnit] {
+        var queryItems = [
+            URLQueryItem(name: "select", value: InventoryUnitRecord.selectColumns),
+            URLQueryItem(name: "order", value: "updated_at.desc")
+        ]
+        if let ids, !ids.isEmpty {
+            let idList = ids.map(\.uuidString).joined(separator: ",")
+            queryItems.append(URLQueryItem(name: "id", value: "in.(\(idList))"))
+        }
+
+        let url = environment.supabaseURL
+            .appending(path: "rest/v1/inventory_units")
+            .appending(queryItems: queryItems)
+
+        let records: [InventoryUnitRecord] = try await httpClient.send(
+            to: url,
+            method: "GET",
+            headers: authenticatedHeaders(token: token, prefer: nil)
+        )
+        return records.map { $0.makeInventoryUnit() }
+    }
+
+    private func fetchManifestInventoryLinks(manifestID: UUID, token: String) async throws -> [ManifestInventoryLinkRecord] {
+        let url = environment.supabaseURL
+            .appending(path: "rest/v1/manifest_inventory_links")
+            .appending(queryItems: [
+                URLQueryItem(name: "manifest_id", value: "eq.\(manifestID.uuidString)")
+            ])
+
+        return try await httpClient.send(
+            to: url,
+            method: "GET",
+            headers: authenticatedHeaders(token: token, prefer: nil)
+        )
     }
 
     private func rotateNonce(for existing: UserSession) async throws -> UserSession {
@@ -937,7 +1418,7 @@ final class SupabaseBackendService: BackendServicing {
         let url = environment.supabaseURL
             .appending(path: "rest/v1/product_catalog")
             .appending(queryItems: [
-                URLQueryItem(name: "select", value: "normalized_model_number,product_name,msrp,source,confidence"),
+                URLQueryItem(name: "select", value: "normalized_model_number,product_name,brand,appliance_category,msrp,source,confidence"),
                 URLQueryItem(name: "normalized_model_number", value: "eq.\(normalizedModelNumber)"),
                 URLQueryItem(name: "limit", value: "1")
             ])
@@ -956,6 +1437,8 @@ final class SupabaseBackendService: BackendServicing {
         return LookupSuggestion(
             normalizedModelNumber: record.normalized_model_number,
             productName: record.product_name,
+            brand: record.brand,
+            applianceCategory: record.appliance_category,
             msrp: record.msrp,
             source: record.source ?? "catalog-cache",
             confidence: record.confidence,
@@ -1006,6 +1489,8 @@ final class SupabaseBackendService: BackendServicing {
         let cachedSuggestion = LookupSuggestion(
             normalizedModelNumber: normalized,
             productName: suggestion.productName,
+            brand: suggestion.brand,
+            applianceCategory: suggestion.applianceCategory,
             msrp: suggestion.msrp,
             source: suggestion.source,
             confidence: suggestion.confidence,
@@ -1061,6 +1546,79 @@ final class SupabaseBackendService: BackendServicing {
                 headers: authenticatedHeaders(token: token, prefer: nil)
             )
         }
+    }
+
+    private func patchInventoryUnits(ids: [UUID], update: InventoryUnitStatusPatch, token: String) async throws {
+        guard !ids.isEmpty else { return }
+        let idList = ids.map(\.uuidString).joined(separator: ",")
+        let url = environment.supabaseURL
+            .appending(path: "rest/v1/inventory_units")
+            .appending(queryItems: [
+                URLQueryItem(name: "id", value: "in.(\(idList))")
+            ])
+
+        _ = try await httpClient.send(
+            to: url,
+            method: "PATCH",
+            headers: authenticatedHeaders(token: token, prefer: "return=representation"),
+            body: update
+        ) as [InventoryUnitRecord]
+    }
+
+    private func patchInventoryUnit(id: UUID, update: InventoryUnitPartialUpdate, token: String) async throws {
+        let url = environment.supabaseURL
+            .appending(path: "rest/v1/inventory_units")
+            .appending(queryItems: [
+                URLQueryItem(name: "id", value: "eq.\(id.uuidString)")
+            ])
+
+        _ = try await httpClient.send(
+            to: url,
+            method: "PATCH",
+            headers: authenticatedHeaders(token: token, prefer: "return=representation"),
+            body: update
+        ) as [InventoryUnitRecord]
+    }
+
+    private func patchManifestInventoryLinks(manifestID: UUID, update: ManifestInventoryLinkUpdate, token: String) async throws {
+        let url = environment.supabaseURL
+            .appending(path: "rest/v1/manifest_inventory_links")
+            .appending(queryItems: [
+                URLQueryItem(name: "manifest_id", value: "eq.\(manifestID.uuidString)")
+            ])
+
+        _ = try await httpClient.send(
+            to: url,
+            method: "PATCH",
+            headers: authenticatedHeaders(token: token, prefer: "return=representation"),
+            body: update
+        ) as [ManifestInventoryLinkRecord]
+    }
+
+    private func deriveBrand(from productName: String) -> String? {
+        let trimmed = productName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return trimmed.split(separator: " ").first.map(String.init)
+    }
+
+    private func deriveApplianceCategory(from productName: String) -> String? {
+        let lowercased = productName.lowercased()
+        let mappings: [(String, String)] = [
+            ("refrigerator", "refrigerator"),
+            ("fridge", "refrigerator"),
+            ("freezer", "refrigerator"),
+            ("washer", "washer"),
+            ("washing machine", "washer"),
+            ("dryer", "dryer"),
+            ("dishwasher", "dishwasher"),
+            ("microwave", "microwave"),
+            ("range", "range"),
+            ("oven", "range"),
+            ("cooktop", "range"),
+            ("stove", "range")
+        ]
+
+        return mappings.first(where: { lowercased.contains($0.0) })?.1
     }
 
     private static func resizedJPEG(_ data: Data, maxDimension: CGFloat, compressionQuality: CGFloat) -> Data? {
@@ -1212,6 +1770,8 @@ private struct ManifestItemRecord: Decodable {
     let manifest_id: UUID
     let model_number: String
     let product_name: String
+    let brand: String?
+    let appliance_category: String?
     let msrp: Decimal
     let our_price: Decimal?
     let condition: String?
@@ -1226,6 +1786,8 @@ private struct ManifestItemRecord: Decodable {
             manifestID: manifest_id,
             modelNumber: model_number,
             productName: product_name,
+            brand: brand,
+            applianceCategory: appliance_category,
             msrp: msrp,
             ourPrice: our_price ?? 0,
             condition: ItemCondition(rawValue: condition ?? "") ?? .used,
@@ -1240,6 +1802,8 @@ private struct ManifestItemRecord: Decodable {
 private struct CatalogProductRecord: Decodable {
     let normalized_model_number: String
     let product_name: String
+    let brand: String?
+    let appliance_category: String?
     let msrp: Decimal
     let source: String?
     let confidence: Double
@@ -1293,6 +1857,8 @@ private struct ManifestUpdate: Encodable {
 private struct ManifestItemUpdate: Encodable {
     let model_number: String
     let product_name: String
+    let brand: String?
+    let appliance_category: String?
     let msrp: Decimal
     let our_price: Decimal
     let condition: String
@@ -1304,6 +1870,8 @@ private struct ManifestItemInsert: Encodable {
     let manifest_id: UUID
     let model_number: String
     let product_name: String
+    let brand: String?
+    let appliance_category: String?
     let msrp: Decimal
     let our_price: Decimal
     let condition: String
@@ -1311,6 +1879,152 @@ private struct ManifestItemInsert: Encodable {
     let photo_path: String?
     let lookup_status: String
     let created_at: Date
+}
+
+private struct InventoryUnitRecord: Decodable {
+    static let selectColumns = "id,org_id,source_manifest_id,source_manifest_item_id,source_manifest_item_index,model_number,product_name,brand,appliance_category,msrp,asking_price,cost_basis,sold_price,condition,status,photo_path,created_at,updated_at,listed_at,reserved_at,sold_at"
+
+    let id: UUID
+    let org_id: UUID
+    let source_manifest_id: UUID?
+    let source_manifest_item_id: UUID?
+    let source_manifest_item_index: Int?
+    let model_number: String
+    let product_name: String
+    let brand: String?
+    let appliance_category: String?
+    let msrp: Decimal
+    let asking_price: Decimal
+    let cost_basis: Decimal?
+    let sold_price: Decimal?
+    let condition: String?
+    let status: String
+    let photo_path: String?
+    let created_at: Date
+    let updated_at: Date
+    let listed_at: Date?
+    let reserved_at: Date?
+    let sold_at: Date?
+
+    func makeInventoryUnit() -> InventoryUnit {
+        InventoryUnit(
+            id: id,
+            orgID: org_id,
+            sourceManifestID: source_manifest_id,
+            sourceManifestItemID: source_manifest_item_id,
+            sourceManifestItemIndex: source_manifest_item_index,
+            modelNumber: model_number,
+            productName: product_name,
+            brand: brand,
+            applianceCategory: appliance_category,
+            msrp: msrp,
+            askingPrice: asking_price,
+            costBasis: cost_basis,
+            soldPrice: sold_price,
+            condition: ItemCondition(rawValue: condition ?? "") ?? .used,
+            status: InventoryStatus(rawValue: status) ?? .inStock,
+            photoPath: photo_path,
+            createdAt: created_at,
+            updatedAt: updated_at,
+            listedAt: listed_at,
+            reservedAt: reserved_at,
+            soldAt: sold_at
+        )
+    }
+}
+
+private struct InventoryUnitInsert: Encodable {
+    let id: UUID
+    let org_id: UUID?
+    let source_manifest_id: UUID?
+    let source_manifest_item_id: UUID?
+    let source_manifest_item_index: Int?
+    let model_number: String
+    let product_name: String
+    let brand: String?
+    let appliance_category: String?
+    let msrp: Decimal
+    let asking_price: Decimal
+    let cost_basis: Decimal?
+    let sold_price: Decimal?
+    let condition: String
+    let status: String
+    let photo_path: String?
+    let listed_at: Date?
+    let reserved_at: Date?
+    let sold_at: Date?
+}
+
+private struct InventoryUnitUpdate: Encodable {
+    let model_number: String
+    let product_name: String
+    let brand: String?
+    let appliance_category: String?
+    let msrp: Decimal
+    let asking_price: Decimal
+    let cost_basis: Decimal?
+    let sold_price: Decimal?
+    let condition: String
+    let status: String
+    let photo_path: String?
+    let listed_at: Date?
+    let reserved_at: Date?
+    let sold_at: Date?
+}
+
+private struct InventoryUnitStatusPatch: Encodable {
+    let status: String
+    let reserved_at: Date?
+    let sold_at: Date?
+    let sold_price: Decimal?
+}
+
+private struct InventoryUnitPartialUpdate: Encodable {
+    var brand: String? = nil
+    var appliance_category: String? = nil
+    var asking_price: Decimal? = nil
+    var status: String? = nil
+    var reserved_at: Date? = nil
+    var sold_price: Decimal? = nil
+    var sold_at: Date? = nil
+
+    var hasChanges: Bool {
+        brand != nil ||
+        appliance_category != nil ||
+        asking_price != nil ||
+        status != nil ||
+        reserved_at != nil ||
+        sold_price != nil ||
+        sold_at != nil
+    }
+}
+
+private struct ManifestInventoryLinkRecord: Decodable {
+    let id: UUID
+    let manifest_id: UUID
+    let manifest_item_id: UUID
+    let inventory_unit_id: UUID
+    let restore_status: String
+    let release_on_delete: Bool
+}
+
+private struct ManifestInventoryLinkInsert: Encodable {
+    let manifest_id: UUID
+    let manifest_item_id: UUID
+    let inventory_unit_id: UUID
+    let restore_status: String
+    let release_on_delete: Bool
+}
+
+private struct ManifestInventoryLinkUpdate: Encodable {
+    let release_on_delete: Bool
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }
 
 private extension URLComponents {

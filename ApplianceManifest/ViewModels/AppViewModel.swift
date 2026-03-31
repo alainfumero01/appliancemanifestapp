@@ -3,8 +3,11 @@ import SwiftUI
 
 @MainActor
 final class AppViewModel: ObservableObject {
+    private static let appModeDefaultsKey = "loadscan.app_mode"
+
     @Published var session: UserSession?
     @Published var manifests: [Manifest] = []
+    @Published var inventoryUnits: [InventoryUnit] = []
     @Published var entitlement: OrganizationEntitlement?
     @Published var orgMembers: [OrganizationMember] = []
     @Published var inviteLink: EnterpriseInviteLink?
@@ -13,10 +16,19 @@ final class AppViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var authMode: AuthMode = .signIn
     @Published var selectedTab: Int = 0
+    @Published var sellerAnalyticsWindow: SellerAnalyticsWindow = .thirtyDays
+    @Published var appMode: AppMode {
+        didSet {
+            UserDefaults.standard.set(appMode.rawValue, forKey: Self.appModeDefaultsKey)
+        }
+    }
 
     let backend: BackendServicing
+    private var didAttemptSellerBackfill = false
 
     init(backend: BackendServicing? = nil) {
+        let storedMode = UserDefaults.standard.string(forKey: Self.appModeDefaultsKey)
+        self.appMode = AppMode(rawValue: storedMode ?? "") ?? .wholesale
         if let backend {
             self.backend = backend
         } else {
@@ -43,6 +55,7 @@ final class AppViewModel: ObservableObject {
         session = stored
         await refreshEntitlement()
         await refreshManifests()
+        await refreshInventoryIfNeeded()
     }
 
     let biometricService = BiometricService()
@@ -75,7 +88,9 @@ final class AppViewModel: ObservableObject {
         let passed = await biometricService.authenticate()
         if passed {
             session = stored
+            await refreshEntitlement()
             await refreshManifests()
+            await refreshInventoryIfNeeded()
         }
     }
 
@@ -83,10 +98,12 @@ final class AppViewModel: ObservableObject {
         await backend.signOut()
         session = nil
         manifests = []
+        inventoryUnits = []
         entitlement = nil
         orgMembers = []
         inviteLink = nil
         inviteCodes = []
+        didAttemptSellerBackfill = false
     }
 
     func refreshEntitlement() async {
@@ -138,6 +155,7 @@ final class AppViewModel: ObservableObject {
         let result = try await backend.joinOrgWithInvite(code: code)
         entitlement = result
         await refreshManifests()
+        await refreshInventoryIfNeeded()
         return result
     }
 
@@ -155,6 +173,8 @@ final class AppViewModel: ObservableObject {
             if let index = manifests.firstIndex(where: { $0.id == updated.id }) {
                 manifests[index] = updated
             }
+            try? await backend.syncManifestInventory(manifestID: updated.id)
+            await refreshInventorySilently()
             return true
         } catch {
             present(error)
@@ -198,6 +218,8 @@ final class AppViewModel: ObservableObject {
             manifests.insert(manifest, at: 0)
             errorMessage = nil
             await refreshEntitlement()
+            try? await backend.syncManifestInventory(manifestID: manifest.id)
+            await refreshInventorySilently()
             return true
         } catch {
             present(error)
@@ -211,6 +233,8 @@ final class AppViewModel: ObservableObject {
             if let index = manifests.firstIndex(where: { $0.id == updated.id }) {
                 manifests[index] = updated
             }
+            try? await backend.syncLinkedInventoryStatus(manifestID: updated.id)
+            await refreshInventorySilently()
         } catch {
             present(error)
         }
@@ -220,6 +244,7 @@ final class AppViewModel: ObservableObject {
         do {
             try await backend.deleteManifest(manifest)
             manifests.removeAll { $0.id == manifest.id }
+            await refreshInventorySilently()
         } catch {
             present(error)
         }
@@ -229,6 +254,7 @@ final class AppViewModel: ObservableObject {
         do {
             try await backend.deleteAllManifests()
             manifests = []
+            await refreshInventorySilently()
         } catch {
             present(error)
         }
@@ -251,9 +277,124 @@ final class AppViewModel: ObservableObject {
             if let index = manifests.firstIndex(where: { $0.id == updated.id }) {
                 manifests[index] = updated
             }
+            try? await backend.syncManifestInventory(manifestID: manifest.id)
+            await refreshInventorySilently()
         } catch {
             present(error)
         }
+    }
+
+    func refreshInventory() async {
+        guard session != nil else {
+            inventoryUnits = []
+            return
+        }
+        do {
+            inventoryUnits = try await backend.fetchInventory()
+        } catch is CancellationError {
+        } catch let urlError as URLError where urlError.code == .cancelled {
+        } catch {
+            present(error)
+        }
+    }
+
+    func ensureSellerDataReady() async {
+        guard canAccessSellerMode else { return }
+        await refreshInventory()
+
+        guard !didAttemptSellerBackfill,
+              inventoryUnits.isEmpty,
+              !manifests.isEmpty else { return }
+
+        didAttemptSellerBackfill = true
+        do {
+            try await backend.syncManifestInventory(manifestID: nil)
+            inventoryUnits = try await backend.fetchInventory()
+        } catch {
+            present(error)
+        }
+    }
+
+    func createInventoryUnits(
+        from draft: DraftManifestItem,
+        quantity: Int,
+        askingPrice: Decimal,
+        costBasis: Decimal?,
+        status: InventoryStatus
+    ) async -> Bool {
+        do {
+            let created = try await backend.createInventoryUnits(
+                from: draft,
+                quantity: quantity,
+                askingPrice: askingPrice,
+                costBasis: costBasis,
+                status: status
+            )
+            inventoryUnits = (created + inventoryUnits)
+                .sorted(by: { $0.updatedAt > $1.updatedAt })
+            errorMessage = nil
+            return true
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
+    func updateInventoryUnit(_ unit: InventoryUnit) async -> Bool {
+        do {
+            let updated = try await backend.updateInventoryUnit(unit)
+            if let index = inventoryUnits.firstIndex(where: { $0.id == updated.id }) {
+                inventoryUnits[index] = updated
+            } else {
+                inventoryUnits.insert(updated, at: 0)
+            }
+            errorMessage = nil
+            return true
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
+    func createQuickLoad(title: String, loadReference: String, inventoryUnitIDs: [UUID]) async -> Bool {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let manifest = try await backend.createQuickLoad(
+                title: title,
+                loadReference: loadReference,
+                inventoryUnitIDs: inventoryUnitIDs
+            )
+            manifests.removeAll { $0.id == manifest.id }
+            manifests.insert(manifest, at: 0)
+            errorMessage = nil
+            await refreshManifests()
+            await refreshInventory()
+            return true
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
+    func setAppMode(_ mode: AppMode) {
+        guard appMode != mode else { return }
+        appMode = mode
+        if mode == .seller, !canAccessSellerMode {
+            inventoryUnits = []
+        }
+    }
+
+    var inventoryGroups: [InventoryGroupRow] {
+        inventoryUnits.groupedInventoryRows()
+    }
+
+    var sellerAnalytics: SellerAnalytics {
+        inventoryUnits.sellerAnalytics(window: sellerAnalyticsWindow)
+    }
+
+    var canAccessSellerMode: Bool {
+        entitlement?.subscriptionStatus == .active
     }
 
     private func performAuth(_ action: () async throws -> UserSession) async {
@@ -266,8 +407,26 @@ final class AppViewModel: ObservableObject {
             }
             await refreshEntitlement()
             await refreshManifests()
+            await refreshInventoryIfNeeded()
         } catch {
             present(error)
+        }
+    }
+
+    private func refreshInventoryIfNeeded() async {
+        guard canAccessSellerMode else {
+            inventoryUnits = []
+            return
+        }
+        await ensureSellerDataReady()
+    }
+
+    private func refreshInventorySilently() async {
+        guard canAccessSellerMode else { return }
+        do {
+            inventoryUnits = try await backend.fetchInventory()
+        } catch {
+            // Keep manifest actions authoritative even if seller sync lags.
         }
     }
 
@@ -303,6 +462,7 @@ final class PreviewBackendService: BackendServicing {
     func removeOrgMember(_ member: OrganizationMember) async throws {}
     func syncAppStoreSubscription(productID: String, transactionJWS: String?) async throws -> OrganizationEntitlement { throw AppError.lookupFailed("Configure StoreKit sync before launch.") }
     func fetchManifests() async throws -> [Manifest] { [] }
+    func fetchInventory() async throws -> [InventoryUnit] { [] }
     func createManifest(title: String, loadReference: String, draftItems: [DraftManifestItem], loadCost: Decimal?, targetMarginPct: Decimal?) async throws -> Manifest { throw AppError.lookupFailed("Configure Supabase before creating manifests.") }
     func appendItems(_ draftItems: [DraftManifestItem], to manifest: Manifest) async throws -> Manifest { manifest }
     func updateManifest(_ manifest: Manifest) async throws -> Manifest { manifest }
@@ -319,4 +479,9 @@ final class PreviewBackendService: BackendServicing {
     func sendPasswordReset(email: String) async throws {}
     func joinOrgWithInvite(code: String) async throws -> OrganizationEntitlement { throw AppError.lookupFailed("Not available in preview.") }
     func fetchInviteCodes() async throws -> [InviteCode] { [] }
+    func createInventoryUnits(from draft: DraftManifestItem, quantity: Int, askingPrice: Decimal, costBasis: Decimal?, status: InventoryStatus) async throws -> [InventoryUnit] { [] }
+    func updateInventoryUnit(_ unit: InventoryUnit) async throws -> InventoryUnit { unit }
+    func createQuickLoad(title: String, loadReference: String, inventoryUnitIDs: [UUID]) async throws -> Manifest { throw AppError.lookupFailed("Quick loads require Supabase setup.") }
+    func syncManifestInventory(manifestID: UUID?) async throws {}
+    func syncLinkedInventoryStatus(manifestID: UUID) async throws {}
 }

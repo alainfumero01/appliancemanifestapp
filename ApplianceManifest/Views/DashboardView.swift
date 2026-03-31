@@ -63,29 +63,48 @@ struct DashboardView: View {
     private var totalConditionCount: Int { conditionCounts.reduce(0) { $0 + $1.count } }
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            LazyVStack(alignment: .leading, spacing: 24) {
-                dashboardHeader
-                kpiGrid
-                if !pricedSoldManifests.isEmpty || !pricedActiveManifests.isEmpty { revenueCard }
-                if !activeManifests.isEmpty { agingSection }
-                if !conditionCounts.isEmpty { conditionSection }
-                if allManifests.isEmpty { emptyState }
+        Group {
+            if appViewModel.appMode == .seller {
+                SellerDashboardHome()
+            } else {
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(alignment: .leading, spacing: 24) {
+                        dashboardHeader
+                        kpiGrid
+                        if !pricedSoldManifests.isEmpty || !pricedActiveManifests.isEmpty { revenueCard }
+                        if !activeManifests.isEmpty { agingSection }
+                        if !conditionCounts.isEmpty { conditionSection }
+                        if allManifests.isEmpty { emptyState }
+                    }
+                    .padding(.horizontal, EnterpriseTheme.pagePadding)
+                    .padding(.top, 16)
+                    .padding(.bottom, 100)
+                }
+                .background(EnterpriseBackground())
+                .navigationTitle("Dashboard")
+                .navigationBarTitleDisplayMode(.inline)
+                .refreshable {
+                    await appViewModel.refreshManifests()
+                }
             }
-            .padding(.horizontal, EnterpriseTheme.pagePadding)
-            .padding(.top, 16)
-            .padding(.bottom, 100)
         }
-        .background(EnterpriseBackground())
-        .navigationTitle("Dashboard")
-        .navigationBarTitleDisplayMode(.inline)
-        .refreshable { await appViewModel.refreshManifests() }
     }
 
     // MARK: - Header
 
     private var dashboardHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
+            AppModePicker(selection: Binding(
+                get: { appViewModel.appMode },
+                set: { newValue in
+                    appViewModel.setAppMode(newValue)
+                    if newValue == .seller {
+                        Task { await appViewModel.ensureSellerDataReady() }
+                    }
+                }
+            ))
+            .padding(.bottom, 8)
+
             Text(greetingText)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(EnterpriseTheme.textSecondary)
@@ -588,6 +607,290 @@ private struct ConditionRow: View {
         case .refurbished:    return "arrow.2.circlepath"
         case .used:           return "checkmark.circle"
         case .scratchAndDent: return "exclamationmark.triangle"
+        }
+    }
+}
+
+private struct SellerDashboardHome: View {
+    @EnvironmentObject private var appViewModel: AppViewModel
+
+    private var analytics: SellerAnalytics { appViewModel.sellerAnalytics }
+
+    var body: some View {
+        ScrollView(showsIndicators: false) {
+            LazyVStack(alignment: .leading, spacing: 22) {
+                header
+
+                if appViewModel.canAccessSellerMode {
+                    windowPicker
+                    quickActions
+                    metricsGrid
+                    staleInventoryCard
+                    topMoversSection
+
+                    if appViewModel.inventoryUnits.isEmpty {
+                        emptyState
+                    }
+                } else {
+                    lockedState
+                }
+            }
+            .padding(.horizontal, EnterpriseTheme.pagePadding)
+            .padding(.top, 16)
+            .padding(.bottom, 100)
+        }
+        .background(EnterpriseBackground())
+        .navigationTitle("Dashboard")
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable {
+            await appViewModel.refreshEntitlement()
+            await appViewModel.refreshManifests()
+            await appViewModel.ensureSellerDataReady()
+        }
+        .task {
+            await appViewModel.ensureSellerDataReady()
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            AppModePicker(selection: Binding(
+                get: { appViewModel.appMode },
+                set: { newValue in appViewModel.setAppMode(newValue) }
+            ))
+
+            Text("Seller Mode")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(EnterpriseTheme.textSecondary)
+            Text("Inventory operating view")
+                .font(.system(size: 26, weight: .bold))
+                .foregroundStyle(EnterpriseTheme.textPrimary)
+            Text("Track live stock, see what moved, and build a load from what you already have on hand.")
+                .font(.subheadline)
+                .foregroundStyle(EnterpriseTheme.textSecondary)
+        }
+    }
+
+    private var windowPicker: some View {
+        Picker("Window", selection: $appViewModel.sellerAnalyticsWindow) {
+            ForEach(SellerAnalyticsWindow.allCases) { window in
+                Text(window.rawValue).tag(window)
+            }
+        }
+        .pickerStyle(.segmented)
+        .tint(EnterpriseTheme.accent)
+    }
+
+    private var quickActions: some View {
+        EnterpriseCard {
+            EnterpriseSectionHeader(
+                eyebrow: "Seller Workflow",
+                title: "Move from stock to load faster",
+                subtitle: "Inventory stays unit-level, and quick loads reserve the exact appliances you choose."
+            )
+
+            HStack(spacing: 12) {
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                        appViewModel.selectedTab = 1
+                    }
+                } label: {
+                    Label("Open Inventory", systemImage: "shippingbox")
+                }
+                .buttonStyle(EnterprisePrimaryButtonStyle())
+
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                        appViewModel.selectedTab = 1
+                    }
+                } label: {
+                    Label("Build Quick Load", systemImage: "bolt.fill")
+                }
+                .buttonStyle(EnterpriseSecondaryButtonStyle())
+            }
+        }
+    }
+
+    private var metricsGrid: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                EnterpriseMetricTile(label: "In Stock", value: "\(analytics.inStockCount)")
+                EnterpriseMetricTile(label: "Listed", value: "\(analytics.listedCount)", accent: EnterpriseTheme.warning)
+            }
+            HStack(spacing: 10) {
+                EnterpriseMetricTile(label: "Reserved", value: "\(analytics.reservedCount)", accent: Color(red: 0.51, green: 0.33, blue: 0.86))
+                EnterpriseMetricTile(label: "Sold \(appViewModel.sellerAnalyticsWindow.rawValue)", value: "\(analytics.soldCount)", accent: EnterpriseTheme.success)
+            }
+            HStack(spacing: 10) {
+                EnterpriseMetricTile(
+                    label: "Active Value",
+                    value: Formatters.currencyString(analytics.activeInventoryValue),
+                    accent: EnterpriseTheme.accent
+                )
+                EnterpriseMetricTile(
+                    label: "Revenue",
+                    value: Formatters.currencyString(analytics.soldRevenue),
+                    accent: EnterpriseTheme.success
+                )
+            }
+            if let soldProfit = analytics.soldProfit {
+                HStack(spacing: 10) {
+                    EnterpriseMetricTile(
+                        label: "Profit",
+                        value: Formatters.currencyString(soldProfit),
+                        accent: soldProfit >= 0 ? EnterpriseTheme.success : EnterpriseTheme.danger
+                    )
+                    EnterpriseMetricTile(
+                        label: "Avg Days To Sell",
+                        value: analytics.averageDaysToSell.map { String(format: "%.1f", $0) } ?? "—",
+                        accent: EnterpriseTheme.warning
+                    )
+                }
+            }
+        }
+    }
+
+    private var staleInventoryCard: some View {
+        EnterpriseCard {
+            EnterpriseSectionHeader(
+                eyebrow: "Aging Stock",
+                title: "What needs attention",
+                subtitle: "These counts only include units that are still active in inventory."
+            )
+
+            HStack(spacing: 10) {
+                sellerMetricPill(label: "30+ Days", value: "\(analytics.stale30Count)", tint: EnterpriseTheme.warning)
+                sellerMetricPill(label: "60+ Days", value: "\(analytics.stale60Count)", tint: Color(red: 0.79, green: 0.41, blue: 0.08))
+                sellerMetricPill(label: "90+ Days", value: "\(analytics.stale90Count)", tint: EnterpriseTheme.danger)
+            }
+        }
+    }
+
+    private var topMoversSection: some View {
+        EnterpriseCard {
+            EnterpriseSectionHeader(
+                eyebrow: "Top Movers",
+                title: "What sold best",
+                subtitle: "Based on sold units in the selected time window."
+            )
+
+            sellerRankingCard(title: "Brands", rows: analytics.topBrands)
+            sellerRankingCard(title: "Categories", rows: analytics.topCategories)
+            sellerRankingCard(title: "Models", rows: analytics.topModels)
+        }
+    }
+
+    private var lockedState: some View {
+        EnterpriseCard(accentLeft: EnterpriseTheme.warning) {
+            EnterpriseSectionHeader(
+                eyebrow: "Seller Mode",
+                title: "Unlock seller inventory tools",
+                subtitle: "Seller mode is available on active Individual and Enterprise subscriptions."
+            )
+
+            Text("Once active, you'll be able to track unit inventory, see what is moving, and build quick loads from live stock.")
+                .font(.subheadline)
+                .foregroundStyle(EnterpriseTheme.textSecondary)
+
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    appViewModel.selectedTab = 2
+                }
+            } label: {
+                Label("Open Membership", systemImage: "creditcard")
+            }
+            .buttonStyle(EnterprisePrimaryButtonStyle())
+        }
+    }
+
+    private var emptyState: some View {
+        EnterpriseCard {
+            EnterpriseSectionHeader(
+                eyebrow: "No Inventory Yet",
+                title: "Bring your stock into Seller Mode",
+                subtitle: "You can import your existing wholesale loads automatically or start scanning individual appliances."
+            )
+
+            HStack(spacing: 12) {
+                Button {
+                    Task { await appViewModel.ensureSellerDataReady() }
+                } label: {
+                    Label("Import My Loads", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .buttonStyle(EnterpriseSecondaryButtonStyle())
+
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                        appViewModel.selectedTab = 1
+                    }
+                } label: {
+                    Label("Open Inventory", systemImage: "shippingbox")
+                }
+                .buttonStyle(EnterprisePrimaryButtonStyle())
+            }
+        }
+    }
+
+    private func sellerMetricPill(label: String, value: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(EnterpriseTheme.textTertiary)
+                .tracking(1.2)
+            Text(value)
+                .font(.system(size: 20, weight: .bold, design: .monospaced))
+                .foregroundStyle(EnterpriseTheme.textPrimary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(tint.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(tint.opacity(0.18), lineWidth: 1)
+        }
+    }
+
+    private func sellerRankingCard(title: String, rows: [(String, Int)]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(EnterpriseTheme.textSecondary)
+                .tracking(1.3)
+
+            if rows.isEmpty {
+                Text("No sold units yet in this window.")
+                    .font(.subheadline)
+                    .foregroundStyle(EnterpriseTheme.textTertiary)
+            } else {
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                    HStack(spacing: 12) {
+                        Text("\(index + 1)")
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .foregroundStyle(EnterpriseTheme.textSecondary)
+                            .frame(width: 18)
+                        Text(row.0)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(EnterpriseTheme.textPrimary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(row.1)")
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .foregroundStyle(EnterpriseTheme.accent)
+                    }
+                    if index < rows.count - 1 {
+                        Divider()
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(EnterpriseTheme.backgroundSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(EnterpriseTheme.border, lineWidth: 1)
         }
     }
 }
