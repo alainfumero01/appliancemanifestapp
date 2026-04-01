@@ -31,6 +31,21 @@ enum AppMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum SellerModeAccessState: String, Equatable {
+    case unknown
+    case loading
+    case active
+    case inactive
+}
+
+enum SellerInventoryRoute: String, Identifiable {
+    case inventoryIntake
+    case quickLoadBuilder
+    case importLoads
+
+    var id: String { rawValue }
+}
+
 enum OrganizationSubscriptionType: String, Codable, Equatable, CaseIterable, Identifiable {
     case individual
     case enterprise
@@ -445,6 +460,24 @@ enum SellerAnalyticsWindow: String, CaseIterable, Identifiable {
         case .all: return nil
         }
     }
+
+    var shortLabel: String {
+        switch self {
+        case .sevenDays: return "7 Days"
+        case .thirtyDays: return "30 Days"
+        case .ninetyDays: return "90 Days"
+        case .all: return "All Time"
+        }
+    }
+
+    var displayLabel: String {
+        switch self {
+        case .sevenDays: return "Past 7 Days"
+        case .thirtyDays: return "Past 30 Days"
+        case .ninetyDays: return "Past 90 Days"
+        case .all: return "All Time"
+        }
+    }
 }
 
 struct SellerAnalytics {
@@ -462,6 +495,74 @@ struct SellerAnalytics {
     var topBrands: [(String, Int)]
     var topCategories: [(String, Int)]
     var topModels: [(String, Int)]
+}
+
+struct InventoryImportSummary: Equatable {
+    let selectedLoadCount: Int
+    let importedLoadCount: Int
+    let alreadyImportedLoadCount: Int
+    let importedUnitCount: Int
+
+    var title: String {
+        if importedUnitCount > 0 {
+            return "Inventory Imported"
+        }
+        if alreadyImportedLoadCount > 0 {
+            return "Inventory Already Up To Date"
+        }
+        return "No Inventory Imported"
+    }
+
+    var message: String {
+        if importedUnitCount > 0 {
+            var parts = ["Imported \(importedUnitCount) unit\(importedUnitCount == 1 ? "" : "s")"]
+            if importedLoadCount > 0 {
+                parts.append("from \(importedLoadCount) load\(importedLoadCount == 1 ? "" : "s")")
+            }
+            if alreadyImportedLoadCount > 0 {
+                parts.append("(\(alreadyImportedLoadCount) already up to date)")
+            }
+            return parts.joined(separator: " ")
+        }
+        if alreadyImportedLoadCount > 0 {
+            return "\(alreadyImportedLoadCount) selected load\(alreadyImportedLoadCount == 1 ? "" : "s") were already imported into Seller Mode."
+        }
+        return "We didn't find any new units to import from the selected loads."
+    }
+}
+
+enum SellerToastStyle: Equatable {
+    case success
+    case info
+    case warning
+}
+
+struct SellerToast: Identifiable, Equatable {
+    let id = UUID()
+    let style: SellerToastStyle
+    let symbol: String
+    let title: String
+    let message: String
+
+    static func inventoryImported(_ summary: InventoryImportSummary) -> SellerToast {
+        SellerToast(
+            style: summary.importedUnitCount > 0 ? .success : .info,
+            symbol: summary.importedUnitCount > 0 ? "shippingbox.fill" : "info.circle.fill",
+            title: summary.title,
+            message: summary.message
+        )
+    }
+
+    static func quickLoadCreated(unitCount: Int, groupCount: Int) -> SellerToast {
+        let unitLabel = "\(unitCount) unit\(unitCount == 1 ? "" : "s")"
+        let groupLabel = "\(groupCount) group\(groupCount == 1 ? "" : "s")"
+        return SellerToast(
+            style: .success,
+            symbol: "bolt.fill",
+            title: "Quick Load Created",
+            message: "Reserved \(unitLabel) from \(groupLabel) into a new load."
+        )
+    }
 }
 
 extension Array where Element == InventoryUnit {

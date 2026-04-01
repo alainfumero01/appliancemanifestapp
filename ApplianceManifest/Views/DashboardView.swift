@@ -621,10 +621,14 @@ private struct SellerDashboardHome: View {
             LazyVStack(alignment: .leading, spacing: 22) {
                 header
 
-                if appViewModel.canAccessSellerMode {
+                if appViewModel.isSellerAccessLoading {
+                    loadingState
+                } else if appViewModel.canAccessSellerMode {
                     windowPicker
                     quickActions
+                    momentumCard
                     metricsGrid
+                    performanceSnapshot
                     staleInventoryCard
                     topMoversSection
 
@@ -643,12 +647,10 @@ private struct SellerDashboardHome: View {
         .navigationTitle("Dashboard")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
-            await appViewModel.refreshEntitlement()
-            await appViewModel.refreshManifests()
-            await appViewModel.ensureSellerDataReady()
+            await appViewModel.refreshSellerWorkspace()
         }
         .task {
-            await appViewModel.ensureSellerDataReady()
+            await appViewModel.prepareSellerMode(forceRefresh: appViewModel.entitlement == nil)
         }
     }
 
@@ -656,7 +658,12 @@ private struct SellerDashboardHome: View {
         VStack(alignment: .leading, spacing: 10) {
             AppModePicker(selection: Binding(
                 get: { appViewModel.appMode },
-                set: { newValue in appViewModel.setAppMode(newValue) }
+                set: { newValue in
+                    appViewModel.setAppMode(newValue)
+                    if newValue == .seller {
+                        Task { await appViewModel.prepareSellerMode(forceRefresh: appViewModel.entitlement == nil) }
+                    }
+                }
             ))
 
             Text("Seller Mode")
@@ -665,20 +672,28 @@ private struct SellerDashboardHome: View {
             Text("Inventory operating view")
                 .font(.system(size: 26, weight: .bold))
                 .foregroundStyle(EnterpriseTheme.textPrimary)
-            Text("Track live stock, see what moved, and build a load from what you already have on hand.")
+            Text("See live stock, understand what moved, and take the next action without digging through busy screens.")
                 .font(.subheadline)
                 .foregroundStyle(EnterpriseTheme.textSecondary)
         }
     }
 
     private var windowPicker: some View {
-        Picker("Window", selection: $appViewModel.sellerAnalyticsWindow) {
-            ForEach(SellerAnalyticsWindow.allCases) { window in
-                Text(window.rawValue).tag(window)
+        EnterpriseCard {
+            EnterpriseSectionHeader(
+                eyebrow: "Sales Window",
+                title: appViewModel.sellerAnalyticsWindow.displayLabel,
+                subtitle: "This changes sold, revenue, and profit metrics. Aging alerts below always reflect your current unsold stock."
+            )
+
+            Picker("Sales Window", selection: $appViewModel.sellerAnalyticsWindow) {
+                ForEach(SellerAnalyticsWindow.allCases) { window in
+                    Text(window.shortLabel).tag(window)
+                }
             }
+            .pickerStyle(.segmented)
+            .tint(EnterpriseTheme.accent)
         }
-        .pickerStyle(.segmented)
-        .tint(EnterpriseTheme.accent)
     }
 
     private var quickActions: some View {
@@ -686,27 +701,52 @@ private struct SellerDashboardHome: View {
             EnterpriseSectionHeader(
                 eyebrow: "Seller Workflow",
                 title: "Move from stock to load faster",
-                subtitle: "Inventory stays unit-level, and quick loads reserve the exact appliances you choose."
+                subtitle: "Keep actions simple: add inventory, build a quick load, or import selected stock from past loads."
             )
 
-            HStack(spacing: 12) {
-                Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                        appViewModel.selectedTab = 1
+            VStack(spacing: 12) {
+                HStack(spacing: 12) {
+                    Button {
+                        appViewModel.openSellerRoute(.inventoryIntake)
+                    } label: {
+                        Label("Add Inventory", systemImage: "plus")
                     }
-                } label: {
-                    Label("Open Inventory", systemImage: "shippingbox")
+                    .buttonStyle(EnterprisePrimaryButtonStyle())
+
+                    Button {
+                        appViewModel.openSellerRoute(.quickLoadBuilder)
+                    } label: {
+                        Label("Build Quick Load", systemImage: "bolt.fill")
+                    }
+                    .buttonStyle(EnterpriseSecondaryButtonStyle())
                 }
-                .buttonStyle(EnterprisePrimaryButtonStyle())
 
                 Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                        appViewModel.selectedTab = 1
-                    }
+                    appViewModel.openSellerRoute(.importLoads)
                 } label: {
-                    Label("Build Quick Load", systemImage: "bolt.fill")
+                    Label("Import From Existing Loads", systemImage: "arrow.down.doc.fill")
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(EnterpriseSecondaryButtonStyle())
+            }
+        }
+    }
+
+    private var momentumCard: some View {
+        EnterpriseCard(accentLeft: analytics.soldCount > 0 ? EnterpriseTheme.success : EnterpriseTheme.accent) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Momentum")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(EnterpriseTheme.textSecondary)
+                    .tracking(1.2)
+
+                Text(momentumTitle)
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(EnterpriseTheme.textPrimary)
+
+                Text(momentumMessage)
+                    .font(.subheadline)
+                    .foregroundStyle(EnterpriseTheme.textSecondary)
             }
         }
     }
@@ -719,7 +759,7 @@ private struct SellerDashboardHome: View {
             }
             HStack(spacing: 10) {
                 EnterpriseMetricTile(label: "Reserved", value: "\(analytics.reservedCount)", accent: Color(red: 0.51, green: 0.33, blue: 0.86))
-                EnterpriseMetricTile(label: "Sold \(appViewModel.sellerAnalyticsWindow.rawValue)", value: "\(analytics.soldCount)", accent: EnterpriseTheme.success)
+                EnterpriseMetricTile(label: "Sold", value: "\(analytics.soldCount)", accent: EnterpriseTheme.success)
             }
             HStack(spacing: 10) {
                 EnterpriseMetricTile(
@@ -733,19 +773,32 @@ private struct SellerDashboardHome: View {
                     accent: EnterpriseTheme.success
                 )
             }
-            if let soldProfit = analytics.soldProfit {
-                HStack(spacing: 10) {
+        }
+    }
+
+    @ViewBuilder
+    private var performanceSnapshot: some View {
+        EnterpriseCard {
+            EnterpriseSectionHeader(
+                eyebrow: "Performance Snapshot",
+                title: "What the current sales window says",
+                subtitle: "These metrics update for \(appViewModel.sellerAnalyticsWindow.displayLabel.lowercased())."
+            )
+
+            HStack(spacing: 10) {
+                if let soldProfit = analytics.soldProfit {
                     EnterpriseMetricTile(
                         label: "Profit",
                         value: Formatters.currencyString(soldProfit),
                         accent: soldProfit >= 0 ? EnterpriseTheme.success : EnterpriseTheme.danger
                     )
-                    EnterpriseMetricTile(
-                        label: "Avg Days To Sell",
-                        value: analytics.averageDaysToSell.map { String(format: "%.1f", $0) } ?? "—",
-                        accent: EnterpriseTheme.warning
-                    )
                 }
+
+                EnterpriseMetricTile(
+                    label: "Avg Days To Sell",
+                    value: analytics.averageDaysToSell.map { String(format: "%.1f", $0) } ?? "—",
+                    accent: EnterpriseTheme.warning
+                )
             }
         }
     }
@@ -753,9 +806,9 @@ private struct SellerDashboardHome: View {
     private var staleInventoryCard: some View {
         EnterpriseCard {
             EnterpriseSectionHeader(
-                eyebrow: "Aging Stock",
-                title: "What needs attention",
-                subtitle: "These counts only include units that are still active in inventory."
+                eyebrow: "Aging Alerts",
+                title: "What needs attention right now",
+                subtitle: "These counts always reflect current unsold stock, not the selected sales window."
             )
 
             HStack(spacing: 10) {
@@ -803,28 +856,44 @@ private struct SellerDashboardHome: View {
         }
     }
 
+    private var loadingState: some View {
+        EnterpriseCard {
+            EnterpriseSectionHeader(
+                eyebrow: "Seller Mode",
+                title: "Loading your seller workspace",
+                subtitle: "We’re checking membership and refreshing inventory so Seller Mode stays accurate."
+            )
+
+            HStack(spacing: 12) {
+                ProgressView()
+                    .tint(EnterpriseTheme.accent)
+                Text("Refreshing seller data...")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(EnterpriseTheme.textSecondary)
+            }
+        }
+    }
+
     private var emptyState: some View {
         EnterpriseCard {
             EnterpriseSectionHeader(
                 eyebrow: "No Inventory Yet",
                 title: "Bring your stock into Seller Mode",
-                subtitle: "You can import your existing wholesale loads automatically or start scanning individual appliances."
+                subtitle: "Import selected existing loads or start scanning individual appliances into inventory."
             )
 
             HStack(spacing: 12) {
                 Button {
-                    Task { await appViewModel.ensureSellerDataReady() }
+                    appViewModel.openSellerRoute(.importLoads)
                 } label: {
-                    Label("Import My Loads", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Import From Loads", systemImage: "arrow.down.doc.fill")
                 }
                 .buttonStyle(EnterpriseSecondaryButtonStyle())
 
                 Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                        appViewModel.selectedTab = 1
-                    }
+                    appViewModel.openSellerRoute(.inventoryIntake)
                 } label: {
-                    Label("Open Inventory", systemImage: "shippingbox")
+                    Label("Add Inventory", systemImage: "plus")
                 }
                 .buttonStyle(EnterprisePrimaryButtonStyle())
             }
@@ -840,6 +909,7 @@ private struct SellerDashboardHome: View {
             Text(value)
                 .font(.system(size: 20, weight: .bold, design: .monospaced))
                 .foregroundStyle(EnterpriseTheme.textPrimary)
+                .contentTransition(.numericText())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
@@ -850,6 +920,33 @@ private struct SellerDashboardHome: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(tint.opacity(0.18), lineWidth: 1)
         }
+    }
+
+    private var momentumTitle: String {
+        if analytics.soldCount > 0 {
+            return "Sales are moving"
+        }
+        if analytics.reservedCount > 0 {
+            return "Loads are forming"
+        }
+        if analytics.inStockCount > 0 || analytics.listedCount > 0 {
+            return "Inventory is ready"
+        }
+        return "Start stocking Seller Mode"
+    }
+
+    private var momentumMessage: String {
+        if analytics.soldCount > 0 {
+            return "You sold \(analytics.soldCount) unit\(analytics.soldCount == 1 ? "" : "s") in \(appViewModel.sellerAnalyticsWindow.displayLabel.lowercased())."
+        }
+        if analytics.reservedCount > 0 {
+            return "\(analytics.reservedCount) unit\(analytics.reservedCount == 1 ? "" : "s") are already reserved into outgoing loads."
+        }
+        let readyCount = analytics.inStockCount + analytics.listedCount
+        if readyCount > 0 {
+            return "\(readyCount) unit\(readyCount == 1 ? "" : "s") are available to turn into your next quick load."
+        }
+        return "Scan or import a few appliances to light up the dashboard with live seller analytics."
     }
 
     private func sellerRankingCard(title: String, rows: [(String, Int)]) -> some View {

@@ -55,12 +55,15 @@ Deno.serve(async (request) => {
 
   const admin = serviceRoleClient();
   let createdManifestID: string | null = null;
+  let phase = "authorize";
 
   try {
     const context = await requireAuthenticatedOrgContext(admin, request);
     const body = await request.json().catch(() => null);
+    phase = "validate-request";
     const title = String(body?.title ?? "").trim() || "Inventory Load";
     const loadReference = String(body?.loadReference ?? "").trim() || buildLoadReference();
+    const providedManifestID = String(body?.manifestID ?? "").trim();
     const inventoryUnitIDs = Array.isArray(body?.inventoryUnitIDs)
       ? Array.from(new Set(body.inventoryUnitIDs.map((value: unknown) => String(value ?? "").trim()).filter(Boolean)))
       : [];
@@ -69,6 +72,7 @@ Deno.serve(async (request) => {
       return json({ error: "At least one inventory unit is required." }, 400);
     }
 
+    phase = "load-inventory";
     const { data: selectedUnits, error: unitsError } = await admin
       .from("inventory_units")
       .select("id,org_id,model_number,product_name,brand,appliance_category,msrp,asking_price,condition,photo_path,status")
@@ -90,8 +94,9 @@ Deno.serve(async (request) => {
     }
 
     const now = new Date().toISOString();
-    createdManifestID = crypto.randomUUID();
+    createdManifestID = providedManifestID || crypto.randomUUID();
 
+    phase = "create-manifest";
     const { error: manifestError } = await admin
       .from("manifests")
       .insert({
@@ -109,6 +114,7 @@ Deno.serve(async (request) => {
       throw manifestError;
     }
 
+    phase = "create-items";
     const grouped = new Map<string, GroupedUnitBucket>();
     for (const unit of units) {
       const key = groupKey(unit);
@@ -155,6 +161,7 @@ Deno.serve(async (request) => {
       throw itemError;
     }
 
+    phase = "create-links";
     const linkRows = Array.from(grouped.values()).flatMap((bucket) =>
       bucket.unitIDs.map((unitID) => ({
         manifest_id: createdManifestID,
@@ -172,6 +179,7 @@ Deno.serve(async (request) => {
       throw linkError;
     }
 
+    phase = "reserve-units";
     const { error: reserveError } = await admin
       .from("inventory_units")
       .update({
@@ -200,6 +208,6 @@ Deno.serve(async (request) => {
 
     const message = error instanceof Error ? error.message : String(error);
     const status = message === "Unauthorized" ? 401 : 400;
-    return json({ error: message || "Unable to create quick load." }, status);
+    return json({ error: message || "Unable to create quick load.", phase }, status);
   }
 });

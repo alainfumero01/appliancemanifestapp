@@ -171,6 +171,7 @@ struct EnterpriseMetricTile: View {
                 .foregroundStyle(EnterpriseTheme.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+                .contentTransition(.numericText())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)

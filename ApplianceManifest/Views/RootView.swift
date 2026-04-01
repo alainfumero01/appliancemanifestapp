@@ -68,6 +68,11 @@ struct RootView: View {
             .tag(3)
         }
         .tint(EnterpriseTheme.accent)
+        .task(id: "\(appViewModel.appMode.rawValue)-\(appViewModel.selectedTab)") {
+            guard appViewModel.appMode == .seller,
+                  appViewModel.selectedTab == 0 || appViewModel.selectedTab == 1 else { return }
+            await appViewModel.prepareSellerMode(forceRefresh: appViewModel.entitlement == nil)
+        }
     }
 }
 

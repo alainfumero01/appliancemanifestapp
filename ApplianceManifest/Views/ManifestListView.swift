@@ -384,6 +384,7 @@ private struct SellerInventoryHubView: View {
     @State private var isPresentingQuickLoadBuilder = false
     @State private var isPresentingInventoryIntake = false
     @State private var isPresentingNewManifest = false
+    @State private var isPresentingLoadImport = false
 
     let backend: BackendServicing
 
@@ -398,7 +399,9 @@ private struct SellerInventoryHubView: View {
             LazyVStack(alignment: .leading, spacing: 20) {
                 header
 
-                if appViewModel.canAccessSellerMode {
+                if appViewModel.isSellerAccessLoading {
+                    loadingState
+                } else if appViewModel.canAccessSellerMode {
                     segmentPicker
 
                     if selectedSegment == .inventory {
@@ -419,9 +422,7 @@ private struct SellerInventoryHubView: View {
         .navigationTitle("Inventory")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
-            await appViewModel.refreshEntitlement()
-            await appViewModel.refreshManifests()
-            await appViewModel.ensureSellerDataReady()
+            await appViewModel.refreshSellerWorkspace()
         }
         .safeAreaInset(edge: .bottom) {
             sellerActionBar
@@ -434,12 +435,42 @@ private struct SellerInventoryHubView: View {
             SellerInventoryIntakeView(isPresented: $isPresentingInventoryIntake, backend: backend)
                 .environmentObject(appViewModel)
         }
+        .sheet(isPresented: $isPresentingLoadImport) {
+            LoadImportSheetView(isPresented: $isPresentingLoadImport) { summary in
+                selectedSegment = .inventory
+                appViewModel.sellerToast = .inventoryImported(summary)
+            }
+            .environmentObject(appViewModel)
+        }
         .sheet(isPresented: $isPresentingNewManifest) {
             NewManifestView(isPresented: $isPresentingNewManifest, backend: backend)
                 .environmentObject(appViewModel)
         }
+        .onChange(of: appViewModel.pendingSellerRoute) { _, route in
+            handlePendingRoute(route)
+        }
+        .task(id: appViewModel.pendingSellerRoute?.id) {
+            handlePendingRoute(appViewModel.pendingSellerRoute)
+        }
+        .overlay(alignment: .top) {
+            if let toast = appViewModel.sellerToast {
+                SellerToastBanner(toast: toast)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+            }
+        }
+        .task(id: appViewModel.sellerToast?.id) {
+            guard appViewModel.sellerToast != nil else { return }
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled else { return }
+            if appViewModel.sellerToast != nil {
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                    appViewModel.sellerToast = nil
+                }
+            }
+        }
         .task {
-            await appViewModel.ensureSellerDataReady()
+            await appViewModel.prepareSellerMode(forceRefresh: appViewModel.entitlement == nil)
         }
     }
 
@@ -450,7 +481,7 @@ private struct SellerInventoryHubView: View {
                 set: { newValue in
                     appViewModel.setAppMode(newValue)
                     if newValue == .seller {
-                        Task { await appViewModel.ensureSellerDataReady() }
+                        Task { await appViewModel.prepareSellerMode(forceRefresh: appViewModel.entitlement == nil) }
                     }
                 }
             ))
@@ -458,10 +489,10 @@ private struct SellerInventoryHubView: View {
             Text("Seller Inventory")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(EnterpriseTheme.textSecondary)
-            Text("Stock you can act on right now")
+            Text("Stock you can act on")
                 .font(.system(size: 26, weight: .bold))
                 .foregroundStyle(EnterpriseTheme.textPrimary)
-            Text("Track available units, reserve them into quick loads, and keep your current wholesale load flow intact.")
+            Text("Keep live stock organized, import units from past loads, and build the next quick load without guessing what is available.")
                 .font(.subheadline)
                 .foregroundStyle(EnterpriseTheme.textSecondary)
         }
@@ -478,10 +509,34 @@ private struct SellerInventoryHubView: View {
     }
 
     private var inventorySummary: some View {
-        HStack(spacing: 10) {
-            EnterpriseMetricTile(label: "Active Units", value: "\(appViewModel.inventoryUnits.filter { $0.status != .sold }.count)")
-            EnterpriseMetricTile(label: "Available for Load", value: "\(appViewModel.inventoryUnits.filter(\.isAvailableForQuickLoad).count)", accent: EnterpriseTheme.success)
-            EnterpriseMetricTile(label: "Groups", value: "\(appViewModel.inventoryGroups.count)", accent: EnterpriseTheme.warning)
+        EnterpriseCard {
+            EnterpriseSectionHeader(
+                eyebrow: "Live Stock",
+                title: "What you can move right now",
+                subtitle: "Import old loads into Seller Mode, add fresh inventory, or reserve available units into a quick load."
+            )
+
+            HStack(spacing: 10) {
+                inventorySummaryPill(label: "Active Units", value: "\(appViewModel.inventoryUnits.filter { $0.status != .sold }.count)", tint: EnterpriseTheme.accent)
+                inventorySummaryPill(label: "Ready for Load", value: "\(appViewModel.inventoryUnits.filter(\.isAvailableForQuickLoad).count)", tint: EnterpriseTheme.success)
+                inventorySummaryPill(label: "Groups", value: "\(appViewModel.inventoryGroups.count)", tint: EnterpriseTheme.warning)
+            }
+
+            HStack(spacing: 12) {
+                Button {
+                    isPresentingInventoryIntake = true
+                } label: {
+                    Label("Add Inventory", systemImage: "plus")
+                }
+                .buttonStyle(EnterprisePrimaryButtonStyle())
+
+                Button {
+                    isPresentingLoadImport = true
+                } label: {
+                    Label("Import From Loads", systemImage: "arrow.down.doc.fill")
+                }
+                .buttonStyle(EnterpriseSecondaryButtonStyle())
+            }
         }
     }
 
@@ -504,9 +559,9 @@ private struct SellerInventoryHubView: View {
                     .buttonStyle(EnterprisePrimaryButtonStyle())
 
                     Button {
-                        Task { await appViewModel.ensureSellerDataReady() }
+                        isPresentingLoadImport = true
                     } label: {
-                        Label("Import My Loads", systemImage: "arrow.triangle.2.circlepath")
+                        Label("Import From Existing Loads", systemImage: "arrow.down.doc.fill")
                     }
                     .buttonStyle(EnterpriseSecondaryButtonStyle())
                 }
@@ -598,6 +653,24 @@ private struct SellerInventoryHubView: View {
         }
     }
 
+    private var loadingState: some View {
+        EnterpriseCard {
+            EnterpriseSectionHeader(
+                eyebrow: "Seller Mode",
+                title: "Checking membership and inventory access",
+                subtitle: "LoadScan is refreshing your seller workspace so stock and membership status stay accurate."
+            )
+
+            HStack(spacing: 12) {
+                ProgressView()
+                    .tint(EnterpriseTheme.accent)
+                Text("Loading seller inventory...")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(EnterpriseTheme.textSecondary)
+            }
+        }
+    }
+
     @ViewBuilder
     private var sellerActionBar: some View {
         if appViewModel.canAccessSellerMode {
@@ -633,6 +706,42 @@ private struct SellerInventoryHubView: View {
                 }
             }
         }
+    }
+
+    private func inventorySummaryPill(label: String, value: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(EnterpriseTheme.textTertiary)
+                .tracking(1.1)
+            Text(value)
+                .font(.system(size: 20, weight: .bold, design: .monospaced))
+                .foregroundStyle(EnterpriseTheme.textPrimary)
+                .contentTransition(.numericText())
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(tint.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(tint.opacity(0.18), lineWidth: 1)
+        }
+    }
+
+    private func handlePendingRoute(_ route: SellerInventoryRoute?) {
+        guard let route else { return }
+        selectedSegment = .inventory
+        switch route {
+        case .inventoryIntake:
+            isPresentingInventoryIntake = true
+        case .quickLoadBuilder:
+            isPresentingQuickLoadBuilder = true
+        case .importLoads:
+            isPresentingLoadImport = true
+        }
+        appViewModel.consumeSellerRoute(route)
     }
 }
 
@@ -929,6 +1038,20 @@ private struct QuickLoadBuilderView: View {
         }
     }
 
+    private var selectedUnitCount: Int {
+        selectedUnitIDs.count
+    }
+
+    private var selectedGroupCount: Int {
+        groups.filter { (selectedCounts[$0.id] ?? 0) > 0 }.count
+    }
+
+    private var selectedAskingValue: Decimal {
+        groups.reduce(0) { total, group in
+            total + (group.askingPrice * Decimal(selectedCounts[group.id] ?? 0))
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -954,6 +1077,30 @@ private struct QuickLoadBuilderView: View {
                         )
                     }
 
+                    if selectedUnitCount > 0 {
+                        EnterpriseCard(accentLeft: EnterpriseTheme.success) {
+                            HStack(alignment: .top, spacing: 14) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("SELECTION")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(EnterpriseTheme.textSecondary)
+                                        .tracking(1.2)
+                                    Text("\(selectedUnitCount) units from \(selectedGroupCount) groups")
+                                        .font(.system(size: 18, weight: .bold))
+                                        .foregroundStyle(EnterpriseTheme.textPrimary)
+                                        .contentTransition(.numericText())
+                                    Text("Estimated asking value \(Formatters.currencyString(selectedAskingValue))")
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(EnterpriseTheme.textSecondary)
+                                }
+
+                                Spacer()
+
+                                StatusBadge(text: "Ready", tint: EnterpriseTheme.success)
+                            }
+                        }
+                    }
+
                     if groups.isEmpty {
                         EnterpriseCard {
                             Text("No in-stock or listed units are available for a quick load.")
@@ -962,7 +1109,9 @@ private struct QuickLoadBuilderView: View {
                         }
                     } else {
                         ForEach(groups) { group in
-                            EnterpriseCard(accentLeft: EnterpriseTheme.accent) {
+                            let selectedCount = selectedCounts[group.id] ?? 0
+
+                            EnterpriseCard(accentLeft: selectedCount > 0 ? EnterpriseTheme.success : EnterpriseTheme.accent) {
                                 HStack(alignment: .top, spacing: 12) {
                                     VStack(alignment: .leading, spacing: 7) {
                                         Text(group.productName)
@@ -973,9 +1122,12 @@ private struct QuickLoadBuilderView: View {
                                             .foregroundStyle(EnterpriseTheme.textSecondary)
                                         HStack(spacing: 10) {
                                             StatusBadge(text: group.condition.displayLabel, tint: EnterpriseTheme.warning)
-                                            Text("\(group.availableCount) available")
+                                            Text("\(group.availableCount) ready")
                                                 .font(.system(size: 11, weight: .medium))
                                                 .foregroundStyle(EnterpriseTheme.textTertiary)
+                                            if selectedCount > 0 {
+                                                StatusBadge(text: "\(selectedCount) Added", tint: EnterpriseTheme.success)
+                                            }
                                         }
                                     }
                                     Spacer()
@@ -983,18 +1135,12 @@ private struct QuickLoadBuilderView: View {
                                         Text(Formatters.currencyString(group.askingPrice))
                                             .font(.system(size: 18, weight: .bold, design: .monospaced))
                                             .foregroundStyle(EnterpriseTheme.textPrimary)
-                                        Stepper(
-                                            value: Binding(
-                                                get: { selectedCounts[group.id] ?? 0 },
-                                                set: { selectedCounts[group.id] = $0 }
-                                            ),
-                                            in: 0...group.availableCount
-                                        ) {
-                                            Text("Qty \(selectedCounts[group.id] ?? 0)")
-                                                .font(.system(size: 12, weight: .semibold))
-                                                .foregroundStyle(EnterpriseTheme.accent)
+                                        QuickLoadCountControl(
+                                            count: selectedCount,
+                                            maxCount: group.availableCount
+                                        ) { delta in
+                                            updateSelection(for: group, delta: delta)
                                         }
-                                        .labelsHidden()
                                     }
                                 }
                             }
@@ -1009,6 +1155,20 @@ private struct QuickLoadBuilderView: View {
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
                 EnterpriseActionBar {
+                    if selectedUnitCount > 0 {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("\(selectedUnitCount) units selected")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(EnterpriseTheme.textPrimary)
+                                    .contentTransition(.numericText())
+                                Text("Estimated asking value \(Formatters.currencyString(selectedAskingValue))")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(EnterpriseTheme.textSecondary)
+                            }
+                            Spacer()
+                        }
+                    }
                     Button("Create Quick Load") {
                         save()
                     }
@@ -1031,16 +1191,297 @@ private struct QuickLoadBuilderView: View {
             defer { isSaving = false }
             let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Quick Load" : title
             let resolvedReference = loadReference.trimmingCharacters(in: .whitespacesAndNewlines)
-            let success = await appViewModel.createQuickLoad(
+            let unitCount = selectedUnitCount
+            let groupCount = selectedGroupCount
+            let manifest = await appViewModel.createQuickLoad(
                 title: resolvedTitle,
                 loadReference: resolvedReference.isEmpty ? "LOAD-\(Int(Date().timeIntervalSince1970))" : resolvedReference,
                 inventoryUnitIDs: selectedUnitIDs
             )
-            if success {
+            if manifest != nil {
+                appViewModel.sellerToast = .quickLoadCreated(unitCount: unitCount, groupCount: groupCount)
                 isPresented = false
                 dismiss()
             }
         }
+    }
+
+    private func updateSelection(for group: InventoryGroupRow, delta: Int) {
+        let current = selectedCounts[group.id] ?? 0
+        let updated = min(max(current + delta, 0), group.availableCount)
+        guard updated != current else { return }
+        selectedCounts[group.id] = updated
+
+        let generator = UIImpactFeedbackGenerator(style: delta > 0 ? .light : .soft)
+        generator.impactOccurred()
+    }
+}
+
+private struct QuickLoadCountControl: View {
+    let count: Int
+    let maxCount: Int
+    let onStep: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button {
+                onStep(-1)
+            } label: {
+                Image(systemName: "minus")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(count > 0 ? EnterpriseTheme.textPrimary : EnterpriseTheme.textTertiary)
+                    .frame(width: 28, height: 28)
+                    .background(EnterpriseTheme.backgroundSecondary)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(count == 0)
+
+            Text("\(count)")
+                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                .foregroundStyle(count > 0 ? Color.white : EnterpriseTheme.textPrimary)
+                .frame(minWidth: 36)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(count > 0 ? EnterpriseTheme.accent : EnterpriseTheme.backgroundSecondary)
+                .clipShape(Capsule())
+                .contentTransition(.numericText())
+
+            Button {
+                onStep(1)
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(maxCount > count ? Color.white : EnterpriseTheme.textTertiary)
+                    .frame(width: 28, height: 28)
+                    .background(maxCount > count ? EnterpriseTheme.success : EnterpriseTheme.backgroundSecondary)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(count >= maxCount)
+        }
+    }
+}
+
+private struct LoadImportCandidate: Identifiable {
+    let manifest: Manifest
+    let importedUnitCount: Int
+
+    var id: UUID { manifest.id }
+    var totalUnitCount: Int { manifest.items.reduce(0) { $0 + $1.quantity } }
+    var isFullyImported: Bool { totalUnitCount > 0 && importedUnitCount >= totalUnitCount }
+    var hasPartialImport: Bool { importedUnitCount > 0 && importedUnitCount < totalUnitCount }
+}
+
+private struct LoadImportSheetView: View {
+    @EnvironmentObject private var appViewModel: AppViewModel
+    @Environment(\.dismiss) private var dismiss
+    @Binding var isPresented: Bool
+    let onFinished: (InventoryImportSummary) -> Void
+    @State private var selectedManifestIDs: Set<UUID> = []
+    @State private var isImporting = false
+
+    private var candidates: [LoadImportCandidate] {
+        let importedCounts = appViewModel.inventoryUnits.reduce(into: [UUID: Int]()) { counts, unit in
+            guard let manifestID = unit.sourceManifestID else { return }
+            counts[manifestID, default: 0] += 1
+        }
+
+        return appViewModel.manifests
+            .sorted { $0.createdAt > $1.createdAt }
+            .map { manifest in
+                LoadImportCandidate(
+                    manifest: manifest,
+                    importedUnitCount: importedCounts[manifest.id, default: 0]
+                )
+            }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    EnterpriseCard {
+                        EnterpriseSectionHeader(
+                            eyebrow: "Import Existing Loads",
+                            title: "Choose what to bring into Seller Mode",
+                            subtitle: "Select the loads you want to convert into unit inventory. Loads already imported are labeled clearly."
+                        )
+
+                        HStack(spacing: 12) {
+                            Button("Select Eligible") {
+                                selectedManifestIDs = Set(candidates.filter { !$0.isFullyImported && $0.totalUnitCount > 0 }.map(\.id))
+                            }
+                            .buttonStyle(EnterpriseSecondaryButtonStyle())
+
+                            Button("Clear Selection") {
+                                selectedManifestIDs.removeAll()
+                            }
+                            .buttonStyle(EnterpriseSecondaryButtonStyle())
+                        }
+                    }
+
+                    if candidates.isEmpty {
+                        EnterpriseCard {
+                            Text("You don't have any existing loads to import yet.")
+                                .font(.subheadline)
+                                .foregroundStyle(EnterpriseTheme.textSecondary)
+                        }
+                    } else {
+                        ForEach(candidates) { candidate in
+                            Button {
+                                toggleSelection(for: candidate)
+                            } label: {
+                                EnterpriseCard(accentLeft: selectedManifestIDs.contains(candidate.id) ? EnterpriseTheme.success : EnterpriseTheme.accent) {
+                                    HStack(alignment: .top, spacing: 12) {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            Text(candidate.manifest.title)
+                                                .font(.system(size: 16, weight: .semibold))
+                                                .foregroundStyle(EnterpriseTheme.textPrimary)
+                                            Text(Formatters.mediumDate.string(from: candidate.manifest.createdAt))
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundStyle(EnterpriseTheme.textSecondary)
+
+                                            HStack(spacing: 8) {
+                                                StatusBadge(text: candidate.manifest.status.rawValue.capitalized, tint: candidate.manifest.status == .sold ? EnterpriseTheme.success : EnterpriseTheme.accent)
+                                                if candidate.isFullyImported {
+                                                    StatusBadge(text: "Imported", tint: EnterpriseTheme.success)
+                                                } else if candidate.hasPartialImport {
+                                                    StatusBadge(text: "Partial", tint: EnterpriseTheme.warning)
+                                                } else {
+                                                    StatusBadge(text: "Ready", tint: EnterpriseTheme.accent)
+                                                }
+                                            }
+
+                                            Text("\(candidate.totalUnitCount) unit\(candidate.totalUnitCount == 1 ? "" : "s") · \(candidate.importedUnitCount) already in inventory")
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundStyle(EnterpriseTheme.textTertiary)
+                                        }
+
+                                        Spacer()
+
+                                        Image(systemName: selectedManifestIDs.contains(candidate.id) ? "checkmark.circle.fill" : "circle")
+                                            .font(.system(size: 22, weight: .semibold))
+                                            .foregroundStyle(selectedManifestIDs.contains(candidate.id) ? EnterpriseTheme.success : EnterpriseTheme.textTertiary)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(candidate.totalUnitCount == 0)
+                        }
+                    }
+                }
+                .padding(.horizontal, EnterpriseTheme.pagePadding)
+                .padding(.top, 20)
+                .padding(.bottom, 140)
+            }
+            .navigationTitle("Import Loads")
+            .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .bottom) {
+                EnterpriseActionBar {
+                    if !selectedManifestIDs.isEmpty {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("\(selectedManifestIDs.count) loads selected")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(EnterpriseTheme.textPrimary)
+                                    .contentTransition(.numericText())
+                                Text("Import into Seller Mode as unit inventory")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(EnterpriseTheme.textSecondary)
+                            }
+                            Spacer()
+                        }
+                    }
+
+                    Button("Import Selected Loads") {
+                        importSelection()
+                    }
+                    .buttonStyle(EnterprisePrimaryButtonStyle())
+                    .disabled(isImporting || selectedManifestIDs.isEmpty)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") { dismiss() }
+                }
+            }
+            .overlay {
+                if isImporting {
+                    SellerScanningOverlay(message: "Importing selected loads into inventory…")
+                }
+            }
+            .enterpriseScreen()
+            .task {
+                if selectedManifestIDs.isEmpty {
+                    selectedManifestIDs = Set(candidates.filter { !$0.isFullyImported && $0.totalUnitCount > 0 }.map(\.id))
+                }
+            }
+        }
+    }
+
+    private func toggleSelection(for candidate: LoadImportCandidate) {
+        guard candidate.totalUnitCount > 0 else { return }
+        if selectedManifestIDs.contains(candidate.id) {
+            selectedManifestIDs.remove(candidate.id)
+        } else {
+            selectedManifestIDs.insert(candidate.id)
+        }
+    }
+
+    private func importSelection() {
+        isImporting = true
+        Task {
+            defer { isImporting = false }
+            if let summary = await appViewModel.importManifests(Array(selectedManifestIDs)) {
+                onFinished(summary)
+                isPresented = false
+                dismiss()
+            }
+        }
+    }
+}
+
+private struct SellerToastBanner: View {
+    let toast: SellerToast
+
+    private var tint: Color {
+        switch toast.style {
+        case .success:
+            return EnterpriseTheme.success
+        case .info:
+            return EnterpriseTheme.accent
+        case .warning:
+            return EnterpriseTheme.warning
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: toast.symbol)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(tint)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(toast.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(EnterpriseTheme.textPrimary)
+                Text(toast.message)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(EnterpriseTheme.textSecondary)
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(tint.opacity(0.22), lineWidth: 1)
+        }
+        .shadow(color: EnterpriseTheme.shadow, radius: 10, x: 0, y: 4)
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 }
 

@@ -673,120 +673,39 @@ final class SupabaseBackendService: BackendServicing {
             ? "LOAD-\(Int(now.timeIntervalSince1970))"
             : loadReference.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let manifestInsert = ManifestInsert(
-            id: manifestID,
-            title: resolvedTitle,
-            load_reference: resolvedLoadReference,
-            status: ManifestStatus.draft.rawValue,
-            org_id: session.user.orgID,
-            created_at: now,
-            updated_at: now,
-            load_cost: nil,
-            target_margin_pct: nil
-        )
+        struct QuickLoadRequest: Encodable {
+            let manifestID: UUID
+            let title: String
+            let loadReference: String
+            let inventoryUnitIDs: [UUID]
+        }
+
+        struct QuickLoadResponse: Decodable {
+            let manifestID: UUID
+            let manifestItemCount: Int
+            let reservedUnitCount: Int
+        }
 
         do {
+            var headers = anonBearerHeaders
+            headers["X-User-Token"] = session.accessToken
             _ = try await httpClient.send(
-                to: environment.supabaseURL.appending(path: "rest/v1/manifests"),
+                to: environment.functionsURL.appending(path: "create-quick-load"),
                 method: "POST",
-                headers: authenticatedHeaders(token: session.accessToken, prefer: "return=representation"),
-                body: [manifestInsert]
-            ) as [ManifestRecord]
-
-            let buckets = Dictionary(grouping: selectedUnits) { unit in
-                [
-                    unit.modelNumber,
-                    unit.productName,
-                    unit.brand ?? "",
-                    unit.applianceCategory ?? "",
-                    unit.condition.rawValue,
-                    unit.photoPath ?? "",
-                    NSDecimalNumber(decimal: unit.msrp).stringValue,
-                    NSDecimalNumber(decimal: unit.askingPrice).stringValue
-                ].joined(separator: "|")
-            }
-
-            let itemInserts: [ManifestItemInsert] = buckets.values.map { units in
-                let sample = units[0]
-                return ManifestItemInsert(
-                    id: UUID(),
-                    manifest_id: manifestID,
-                    model_number: sample.modelNumber,
-                    product_name: sample.productName,
-                    brand: sample.brand,
-                    appliance_category: sample.applianceCategory,
-                    msrp: sample.msrp,
-                    our_price: sample.askingPrice,
-                    condition: sample.condition.rawValue,
-                    quantity: units.count,
-                    photo_path: sample.photoPath,
-                    lookup_status: LookupStatus.confirmed.rawValue,
-                    created_at: now
+                headers: headers,
+                body: QuickLoadRequest(
+                    manifestID: manifestID,
+                    title: resolvedTitle,
+                    loadReference: resolvedLoadReference,
+                    inventoryUnitIDs: inventoryUnitIDs
                 )
-            }
-
-            let insertedItems: [ManifestItemRecord] = try await httpClient.send(
-                to: environment.supabaseURL.appending(path: "rest/v1/manifest_items"),
-                method: "POST",
-                headers: authenticatedHeaders(token: session.accessToken, prefer: "return=representation"),
-                body: itemInserts
-            )
-
-            let insertedItemsByKey = Dictionary(uniqueKeysWithValues: insertedItems.map { record in
-                let key = [
-                    record.model_number,
-                    record.product_name,
-                    record.brand ?? "",
-                    record.appliance_category ?? "",
-                    record.condition ?? "",
-                    record.photo_path ?? "",
-                    NSDecimalNumber(decimal: record.msrp).stringValue,
-                    NSDecimalNumber(decimal: record.our_price ?? 0).stringValue
-                ].joined(separator: "|")
-                return (key, record)
-            })
-
-            let linkInserts: [ManifestInventoryLinkInsert] = selectedUnits.compactMap { unit in
-                let key = [
-                    unit.modelNumber,
-                    unit.productName,
-                    unit.brand ?? "",
-                    unit.applianceCategory ?? "",
-                    unit.condition.rawValue,
-                    unit.photoPath ?? "",
-                    NSDecimalNumber(decimal: unit.msrp).stringValue,
-                    NSDecimalNumber(decimal: unit.askingPrice).stringValue
-                ].joined(separator: "|")
-                guard let itemRecord = insertedItemsByKey[key] else { return nil }
-                return ManifestInventoryLinkInsert(
-                    manifest_id: manifestID,
-                    manifest_item_id: itemRecord.id,
-                    inventory_unit_id: unit.id,
-                    restore_status: unit.status.rawValue,
-                    release_on_delete: true
-                )
-            }
-
-            _ = try await httpClient.send(
-                to: environment.supabaseURL.appending(path: "rest/v1/manifest_inventory_links"),
-                method: "POST",
-                headers: authenticatedHeaders(token: session.accessToken, prefer: "return=representation"),
-                body: linkInserts
-            ) as [ManifestInventoryLinkRecord]
-
-            try await patchInventoryUnits(
-                ids: selectedUnits.map(\.id),
-                update: InventoryUnitStatusPatch(
-                    status: InventoryStatus.reserved.rawValue,
-                    reserved_at: now,
-                    sold_at: nil,
-                    sold_price: nil
-                ),
-                token: session.accessToken
-            )
+            ) as QuickLoadResponse
         } catch {
-            try? await deleteManifestByID(manifestID, token: session.accessToken)
-            throw AppError.lookupFailed("We couldn't create that quick load right now. Please try again.")
+            if let recoveredRecord = try? await fetchManifestRecord(id: manifestID, token: session.accessToken),
+               let recoveredItems = try? await fetchManifestItems(manifestID: manifestID, token: session.accessToken) {
+                return recoveredRecord.makeManifest(items: recoveredItems, ownerEmail: session.user.email)
+            }
+            throw error
         }
 
         guard let manifestRecord = try await fetchManifestRecord(id: manifestID, token: session.accessToken) else {
