@@ -117,11 +117,20 @@ final class AppViewModel: ObservableObject {
             sellerAccessState = .unknown
             return
         }
+        let existingEntitlement = entitlement
         if showSellerAccessState && entitlement == nil {
             sellerAccessState = .loading
         }
         do {
-            entitlement = try await backend.fetchEntitlement()
+            let fetchedEntitlement = try await backend.fetchEntitlement()
+            if shouldPreserveExistingActiveEntitlement(
+                current: existingEntitlement,
+                incoming: fetchedEntitlement
+            ) {
+                syncSellerAccessStateFromEntitlement()
+                return
+            }
+            entitlement = fetchedEntitlement
             syncSellerAccessStateFromEntitlement()
         } catch {
             if entitlement != nil {
@@ -502,7 +511,7 @@ final class AppViewModel: ObservableObject {
     }
 
     var canAccessSellerMode: Bool {
-        entitlement?.subscriptionStatus == .active
+        sellerAccessState == .active || entitlement?.subscriptionStatus == .active
     }
 
     var isSellerAccessLoading: Bool {
@@ -557,6 +566,17 @@ final class AppViewModel: ObservableObject {
             return
         }
         sellerAccessState = entitlement.subscriptionStatus == .active ? .active : .inactive
+    }
+
+    private func shouldPreserveExistingActiveEntitlement(
+        current: OrganizationEntitlement?,
+        incoming: OrganizationEntitlement
+    ) -> Bool {
+        guard let current, current.subscriptionStatus == .active else { return false }
+        guard incoming.orgID == current.orgID else { return false }
+        return incoming.subscriptionStatus == .free
+            && incoming.billingPlatform == .none
+            && incoming.appStoreProductID == nil
     }
 
     private func inventoryCountsByManifestID() -> [UUID: Int] {

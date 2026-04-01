@@ -83,9 +83,13 @@ struct ManifestListView: View {
                     Text("This will permanently remove every load manifest and all scanned items.")
                 }
                 .task {
-                    await appViewModel.refreshEntitlement()
+                    if appViewModel.entitlement == nil {
+                        await appViewModel.refreshEntitlement()
+                    }
                     let isActive = appViewModel.entitlement?.subscriptionStatus == .active
-                    if !isActive {
+                    if isActive {
+                        bannerVisible = false
+                    } else {
                         withAnimation(.spring(response: 0.5, dampingFraction: 0.78).delay(0.3)) {
                             bannerVisible = true
                         }
@@ -98,25 +102,29 @@ struct ManifestListView: View {
     // MARK: - Dashboard Header
 
     private var dashboardHeader: some View {
-        HStack(alignment: .center, spacing: 14) {
-            LoadScanIconView(size: 48)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .shadow(
-                    color: Color(red: 0.145, green: 0.337, blue: 0.859).opacity(0.22),
-                    radius: 10, x: 0, y: 4
-                )
+        VStack(alignment: .leading, spacing: 14) {
+            AppModePicker(selection: appModeBinding)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text("LoadScan")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(EnterpriseTheme.textPrimary)
-                Text(appViewModel.session?.user.email ?? "")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(EnterpriseTheme.textSecondary)
-                    .lineLimit(1)
+            HStack(alignment: .center, spacing: 14) {
+                LoadScanIconView(size: 48)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .shadow(
+                        color: Color(red: 0.145, green: 0.337, blue: 0.859).opacity(0.22),
+                        radius: 10, x: 0, y: 4
+                    )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("LoadScan")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(EnterpriseTheme.textPrimary)
+                    Text(appViewModel.session?.user.email ?? "")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(EnterpriseTheme.textSecondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
             }
-
-            Spacer()
         }
     }
 
@@ -316,6 +324,20 @@ struct ManifestListView: View {
     }
 }
 
+private extension ManifestListView {
+    var appModeBinding: Binding<AppMode> {
+        Binding(
+            get: { appViewModel.appMode },
+            set: { newValue in
+                appViewModel.setAppMode(newValue)
+                if newValue == .seller {
+                    Task { await appViewModel.prepareSellerMode(forceRefresh: appViewModel.entitlement == nil) }
+                }
+            }
+        )
+    }
+}
+
 // MARK: - Manifest Row Card
 
 private struct ManifestRowCard: View {
@@ -387,6 +409,18 @@ private struct SellerInventoryHubView: View {
     @State private var isPresentingLoadImport = false
 
     let backend: BackendServicing
+
+    private var appModeBinding: Binding<AppMode> {
+        Binding(
+            get: { appViewModel.appMode },
+            set: { newValue in
+                appViewModel.setAppMode(newValue)
+                if newValue == .seller {
+                    Task { await appViewModel.prepareSellerMode(forceRefresh: appViewModel.entitlement == nil) }
+                }
+            }
+        )
+    }
 
     private var groupedByCategory: [(String, [InventoryGroupRow])] {
         Dictionary(grouping: appViewModel.inventoryGroups, by: \.applianceCategory)
@@ -476,25 +510,11 @@ private struct SellerInventoryHubView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            AppModePicker(selection: Binding(
-                get: { appViewModel.appMode },
-                set: { newValue in
-                    appViewModel.setAppMode(newValue)
-                    if newValue == .seller {
-                        Task { await appViewModel.prepareSellerMode(forceRefresh: appViewModel.entitlement == nil) }
-                    }
-                }
-            ))
+            AppModePicker(selection: appModeBinding)
 
-            Text("Seller Inventory")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(EnterpriseTheme.textSecondary)
-            Text("Stock you can act on")
+            Text("Inventory")
                 .font(.system(size: 26, weight: .bold))
                 .foregroundStyle(EnterpriseTheme.textPrimary)
-            Text("Keep live stock organized, import units from past loads, and build the next quick load without guessing what is available.")
-                .font(.subheadline)
-                .foregroundStyle(EnterpriseTheme.textSecondary)
         }
     }
 
@@ -511,9 +531,7 @@ private struct SellerInventoryHubView: View {
     private var inventorySummary: some View {
         EnterpriseCard {
             EnterpriseSectionHeader(
-                eyebrow: "Live Stock",
-                title: "What you can move right now",
-                subtitle: "Import old loads into Seller Mode, add fresh inventory, or reserve available units into a quick load."
+                title: "Live Stock"
             )
 
             HStack(spacing: 10) {
@@ -545,9 +563,7 @@ private struct SellerInventoryHubView: View {
         if groupedByCategory.isEmpty {
             EnterpriseCard {
                 EnterpriseSectionHeader(
-                    eyebrow: "Inventory",
-                    title: "No stock in seller inventory yet",
-                    subtitle: "Import your existing loads or add appliances directly by scan or manual lookup."
+                    title: "No inventory yet"
                 )
 
                 HStack(spacing: 12) {
@@ -589,9 +605,7 @@ private struct SellerInventoryHubView: View {
     private var loadsSection: some View {
         EnterpriseCard {
             EnterpriseSectionHeader(
-                eyebrow: "Quick Loads",
-                title: "Seller loads stay standard",
-                subtitle: "Quick Load Builder creates the same manifest type you already use. Seller mode just helps you build it from live stock faster."
+                title: "Loads"
             )
 
             HStack(spacing: 12) {
@@ -637,9 +651,7 @@ private struct SellerInventoryHubView: View {
     private var lockedState: some View {
         EnterpriseCard(accentLeft: EnterpriseTheme.warning) {
             EnterpriseSectionHeader(
-                eyebrow: "Seller Mode",
-                title: "Upgrade to manage appliance inventory",
-                subtitle: "Seller mode is part of paid Individual and Enterprise plans so you can track stock, reserve units into loads, and see what is moving."
+                title: "Seller Mode requires an active plan"
             )
 
             Button {
@@ -656,9 +668,7 @@ private struct SellerInventoryHubView: View {
     private var loadingState: some View {
         EnterpriseCard {
             EnterpriseSectionHeader(
-                eyebrow: "Seller Mode",
-                title: "Checking membership and inventory access",
-                subtitle: "LoadScan is refreshing your seller workspace so stock and membership status stay accurate."
+                title: "Loading Seller Mode"
             )
 
             HStack(spacing: 12) {

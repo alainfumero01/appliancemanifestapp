@@ -94,15 +94,7 @@ struct DashboardView: View {
 
     private var dashboardHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
-            AppModePicker(selection: Binding(
-                get: { appViewModel.appMode },
-                set: { newValue in
-                    appViewModel.setAppMode(newValue)
-                    if newValue == .seller {
-                        Task { await appViewModel.ensureSellerDataReady() }
-                    }
-                }
-            ))
+            AppModePicker(selection: appModeBinding)
             .padding(.bottom, 8)
 
             Text(greetingText)
@@ -399,6 +391,20 @@ struct DashboardView: View {
     }
 }
 
+private extension DashboardView {
+    var appModeBinding: Binding<AppMode> {
+        Binding(
+            get: { appViewModel.appMode },
+            set: { newValue in
+                appViewModel.setAppMode(newValue)
+                if newValue == .seller {
+                    Task { await appViewModel.prepareSellerMode(forceRefresh: appViewModel.entitlement == nil) }
+                }
+            }
+        )
+    }
+}
+
 // MARK: - KPI Tile
 
 private struct KPITile: View {
@@ -615,6 +621,17 @@ private struct SellerDashboardHome: View {
     @EnvironmentObject private var appViewModel: AppViewModel
 
     private var analytics: SellerAnalytics { appViewModel.sellerAnalytics }
+    private var appModeBinding: Binding<AppMode> {
+        Binding(
+            get: { appViewModel.appMode },
+            set: { newValue in
+                appViewModel.setAppMode(newValue)
+                if newValue == .seller {
+                    Task { await appViewModel.prepareSellerMode(forceRefresh: appViewModel.entitlement == nil) }
+                }
+            }
+        )
+    }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -656,34 +673,18 @@ private struct SellerDashboardHome: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            AppModePicker(selection: Binding(
-                get: { appViewModel.appMode },
-                set: { newValue in
-                    appViewModel.setAppMode(newValue)
-                    if newValue == .seller {
-                        Task { await appViewModel.prepareSellerMode(forceRefresh: appViewModel.entitlement == nil) }
-                    }
-                }
-            ))
+            AppModePicker(selection: appModeBinding)
 
-            Text("Seller Mode")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(EnterpriseTheme.textSecondary)
-            Text("Inventory operating view")
+            Text("Seller Dashboard")
                 .font(.system(size: 26, weight: .bold))
                 .foregroundStyle(EnterpriseTheme.textPrimary)
-            Text("See live stock, understand what moved, and take the next action without digging through busy screens.")
-                .font(.subheadline)
-                .foregroundStyle(EnterpriseTheme.textSecondary)
         }
     }
 
     private var windowPicker: some View {
         EnterpriseCard {
             EnterpriseSectionHeader(
-                eyebrow: "Sales Window",
-                title: appViewModel.sellerAnalyticsWindow.displayLabel,
-                subtitle: "This changes sold, revenue, and profit metrics. Aging alerts below always reflect your current unsold stock."
+                title: "Sales Window"
             )
 
             Picker("Sales Window", selection: $appViewModel.sellerAnalyticsWindow) {
@@ -699,9 +700,7 @@ private struct SellerDashboardHome: View {
     private var quickActions: some View {
         EnterpriseCard {
             EnterpriseSectionHeader(
-                eyebrow: "Seller Workflow",
-                title: "Move from stock to load faster",
-                subtitle: "Keep actions simple: add inventory, build a quick load, or import selected stock from past loads."
+                title: "Quick Actions"
             )
 
             VStack(spacing: 12) {
@@ -780,9 +779,7 @@ private struct SellerDashboardHome: View {
     private var performanceSnapshot: some View {
         EnterpriseCard {
             EnterpriseSectionHeader(
-                eyebrow: "Performance Snapshot",
-                title: "What the current sales window says",
-                subtitle: "These metrics update for \(appViewModel.sellerAnalyticsWindow.displayLabel.lowercased())."
+                title: "Performance"
             )
 
             HStack(spacing: 10) {
@@ -806,9 +803,7 @@ private struct SellerDashboardHome: View {
     private var staleInventoryCard: some View {
         EnterpriseCard {
             EnterpriseSectionHeader(
-                eyebrow: "Aging Alerts",
-                title: "What needs attention right now",
-                subtitle: "These counts always reflect current unsold stock, not the selected sales window."
+                title: "Aging"
             )
 
             HStack(spacing: 10) {
@@ -822,9 +817,7 @@ private struct SellerDashboardHome: View {
     private var topMoversSection: some View {
         EnterpriseCard {
             EnterpriseSectionHeader(
-                eyebrow: "Top Movers",
-                title: "What sold best",
-                subtitle: "Based on sold units in the selected time window."
+                title: "Top Movers"
             )
 
             sellerRankingCard(title: "Brands", rows: analytics.topBrands)
@@ -836,14 +829,8 @@ private struct SellerDashboardHome: View {
     private var lockedState: some View {
         EnterpriseCard(accentLeft: EnterpriseTheme.warning) {
             EnterpriseSectionHeader(
-                eyebrow: "Seller Mode",
-                title: "Unlock seller inventory tools",
-                subtitle: "Seller mode is available on active Individual and Enterprise subscriptions."
+                title: "Seller Mode requires an active plan"
             )
-
-            Text("Once active, you'll be able to track unit inventory, see what is moving, and build quick loads from live stock.")
-                .font(.subheadline)
-                .foregroundStyle(EnterpriseTheme.textSecondary)
 
             Button {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
@@ -859,9 +846,7 @@ private struct SellerDashboardHome: View {
     private var loadingState: some View {
         EnterpriseCard {
             EnterpriseSectionHeader(
-                eyebrow: "Seller Mode",
-                title: "Loading your seller workspace",
-                subtitle: "We’re checking membership and refreshing inventory so Seller Mode stays accurate."
+                title: "Loading Seller Mode"
             )
 
             HStack(spacing: 12) {
@@ -877,9 +862,7 @@ private struct SellerDashboardHome: View {
     private var emptyState: some View {
         EnterpriseCard {
             EnterpriseSectionHeader(
-                eyebrow: "No Inventory Yet",
-                title: "Bring your stock into Seller Mode",
-                subtitle: "Import selected existing loads or start scanning individual appliances into inventory."
+                title: "No inventory yet"
             )
 
             HStack(spacing: 12) {
