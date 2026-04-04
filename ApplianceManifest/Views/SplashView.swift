@@ -10,8 +10,8 @@ struct LoadScanIconView: View {
         ZStack {
             LinearGradient(
                 colors: [
-                    Color(red: 0.145, green: 0.337, blue: 0.859),
-                    Color(red: 0.082, green: 0.251, blue: 0.690),
+                    EnterpriseTheme.brandGradientStart,
+                    EnterpriseTheme.brandGradientEnd,
                 ],
                 startPoint: .top,
                 endPoint:   .bottom
@@ -108,7 +108,7 @@ struct SplashView: View {
                 LoadScanIconView(size: 96)
                     .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                     .shadow(
-                        color: Color(red: 0.145, green: 0.337, blue: 0.859).opacity(0.28),
+                        color: EnterpriseTheme.brandShadow,
                         radius: 22, x: 0, y: 8
                     )
 

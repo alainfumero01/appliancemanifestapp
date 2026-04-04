@@ -8,38 +8,38 @@ struct OnboardingView: View {
     private let pages: [OnboardingPage] = [
         OnboardingPage(
             icon: "shippingbox.fill",
-            iconColor: Color(red: 0.145, green: 0.337, blue: 0.859),
+            iconColor: EnterpriseTheme.accent,
             title: "Welcome to LoadScan",
             body: "The smarter way to buy, price, and track appliance loads. Let's walk through how it works.",
             isWelcome: true
         ),
         OnboardingPage(
             icon: "chart.bar.fill",
-            iconColor: Color(red: 0.145, green: 0.337, blue: 0.859),
+            iconColor: EnterpriseTheme.accent,
             title: "Your Dashboard",
             body: "The Dashboard shows your active inventory, aging loads, and — when you use Load Pricing — real profit figures for every load you've sold."
         ),
         OnboardingPage(
             icon: "doc.text.magnifyingglass",
-            iconColor: Color(red: 1.0, green: 0.6, blue: 0.1),
+            iconColor: EnterpriseTheme.accent,
             title: "Build a Load Manifest",
             body: "Tap New Load on the Loads tab to start. Scan a sticker photo or type a model number — AI looks up the product name and MSRP automatically."
         ),
         OnboardingPage(
             icon: "camera.viewfinder",
-            iconColor: Color(red: 0.2, green: 0.7, blue: 0.5),
+            iconColor: EnterpriseTheme.accent,
             title: "Scan or Type",
             body: "Point the camera at any appliance sticker. If scanning isn't an option, switch to manual entry — just type the model number and hit search."
         ),
         OnboardingPage(
             icon: "tag.fill",
-            iconColor: Color(red: 0.85, green: 0.35, blue: 0.55),
+            iconColor: EnterpriseTheme.accent,
             title: "Smart Pricing",
             body: "Enter what you paid for the whole load and your target profit margin. LoadScan distributes prices across every item proportionally by MSRP and condition — then tracks your profit on the Dashboard."
         ),
         OnboardingPage(
             icon: "dollarsign.circle.fill",
-            iconColor: Color(red: 0.4, green: 0.3, blue: 0.8),
+            iconColor: EnterpriseTheme.accent,
             title: "Mark Loads as Sold",
             body: "Swipe left on any load in your list to mark it sold. Sold loads with pricing data feed straight into your Dashboard profit totals.",
             isLast: true
@@ -48,8 +48,7 @@ struct OnboardingView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            // Background
-            Color(red: 0.97, green: 0.97, blue: 0.975).ignoresSafeArea()
+            EnterpriseBackground()
 
             VStack(spacing: 0) {
                 // Skip button row
@@ -58,10 +57,10 @@ struct OnboardingView: View {
                     if currentPage < pages.count - 1 {
                         Button("Skip") { dismiss() }
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Color(red: 0.145, green: 0.337, blue: 0.859))
+                            .foregroundStyle(EnterpriseTheme.accent)
                             .padding(.horizontal, 20)
                             .padding(.vertical, 10)
-                            .background(Color(red: 0.145, green: 0.337, blue: 0.859).opacity(0.08))
+                            .background(EnterpriseTheme.accentDim)
                             .clipShape(Capsule())
                     }
                 }
@@ -85,8 +84,8 @@ struct OnboardingView: View {
                         ForEach(0..<pages.count, id: \.self) { i in
                             Capsule()
                                 .fill(i == currentPage
-                                      ? Color(red: 0.145, green: 0.337, blue: 0.859)
-                                      : Color(red: 0.145, green: 0.337, blue: 0.859).opacity(0.2))
+                                      ? EnterpriseTheme.accent
+                                      : EnterpriseTheme.borderStrong.opacity(0.5))
                                 .frame(width: i == currentPage ? 22 : 7, height: 7)
                                 .animation(.spring(response: 0.3, dampingFraction: 0.7), value: currentPage)
                         }
@@ -107,9 +106,9 @@ struct OnboardingView: View {
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
-                            .background(Color(red: 0.145, green: 0.337, blue: 0.859))
+                            .background(EnterpriseTheme.accent)
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .shadow(color: Color(red: 0.145, green: 0.337, blue: 0.859).opacity(0.3),
+                            .shadow(color: EnterpriseTheme.brandShadow,
                                     radius: 8, x: 0, y: 4)
                     }
                     .padding(.horizontal, 28)
@@ -154,7 +153,7 @@ private struct PageView: View {
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
                     .fill(page.iconColor)
                     .frame(width: 80, height: 80)
-                    .shadow(color: page.iconColor.opacity(0.35), radius: 16, x: 0, y: 8)
+                    .shadow(color: EnterpriseTheme.brandShadow, radius: 16, x: 0, y: 8)
                 Image(systemName: page.icon)
                     .font(.system(size: 34, weight: .medium))
                     .foregroundStyle(.white)
@@ -169,7 +168,7 @@ private struct PageView: View {
             VStack(spacing: 14) {
                 Text(page.title)
                     .font(.system(size: page.isWelcome ? 30 : 26, weight: .bold))
-                    .foregroundStyle(Color(red: 0.1, green: 0.1, blue: 0.15))
+                    .foregroundStyle(EnterpriseTheme.textPrimary)
                     .multilineTextAlignment(.center)
                     .opacity(appeared ? 1 : 0)
                     .offset(y: appeared ? 0 : 12)
@@ -177,7 +176,7 @@ private struct PageView: View {
 
                 Text(page.body)
                     .font(.system(size: 16, weight: .regular))
-                    .foregroundStyle(Color(red: 0.38, green: 0.38, blue: 0.42))
+                    .foregroundStyle(EnterpriseTheme.textSecondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(4)
                     .padding(.horizontal, 12)

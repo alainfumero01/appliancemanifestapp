@@ -67,7 +67,7 @@ struct AuthView: View {
             LoadScanIconView(size: 84)
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .shadow(
-                    color: Color(red: 0.145, green: 0.337, blue: 0.859).opacity(0.22),
+                    color: EnterpriseTheme.brandShadow,
                     radius: 8, x: 0, y: 4
                 )
 
@@ -97,13 +97,13 @@ struct AuthView: View {
             appleAuthHelperText
         }
         .padding(24)
-        .background(Color.white)
+        .background(EnterpriseTheme.surfacePrimary)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(EnterpriseTheme.border, lineWidth: 1)
         }
-        .shadow(color: Color.black.opacity(0.07), radius: 6, x: 0, y: 3)
+        .shadow(color: EnterpriseTheme.shadow, radius: 6, x: 0, y: 3)
     }
 
     // MARK: - Underline tab switcher

@@ -1,3 +1,4 @@
+import Charts
 import SwiftUI
 
 struct DashboardView: View {
@@ -139,7 +140,7 @@ struct DashboardView: View {
                     label: "Loads Sold",
                     value: "\(soldManifests.count)",
                     icon: "checkmark.seal.fill",
-                    color: Color(red: 0.4, green: 0.3, blue: 0.8)
+                    color: EnterpriseTheme.accent
                 )
             }
         }
@@ -621,6 +622,9 @@ private struct SellerDashboardHome: View {
     @EnvironmentObject private var appViewModel: AppViewModel
 
     private var analytics: SellerAnalytics { appViewModel.sellerAnalytics }
+    private var trendSnapshot: SellerTrendSnapshot {
+        appViewModel.inventoryUnits.sellerTrendSnapshot(window: appViewModel.sellerAnalyticsWindow)
+    }
     private var appModeBinding: Binding<AppMode> {
         Binding(
             get: { appViewModel.appMode },
@@ -645,6 +649,7 @@ private struct SellerDashboardHome: View {
                     quickActions
                     momentumCard
                     metricsGrid
+                    trendSection
                     performanceSnapshot
                     staleInventoryCard
                     topMoversSection
@@ -757,7 +762,7 @@ private struct SellerDashboardHome: View {
                 EnterpriseMetricTile(label: "Listed", value: "\(analytics.listedCount)", accent: EnterpriseTheme.warning)
             }
             HStack(spacing: 10) {
-                EnterpriseMetricTile(label: "Reserved", value: "\(analytics.reservedCount)", accent: Color(red: 0.51, green: 0.33, blue: 0.86))
+                EnterpriseMetricTile(label: "Reserved", value: "\(analytics.reservedCount)", accent: EnterpriseTheme.reserved)
                 EnterpriseMetricTile(label: "Sold", value: "\(analytics.soldCount)", accent: EnterpriseTheme.success)
             }
             HStack(spacing: 10) {
@@ -795,6 +800,73 @@ private struct SellerDashboardHome: View {
                     label: "Avg Days To Sell",
                     value: analytics.averageDaysToSell.map { String(format: "%.1f", $0) } ?? "—",
                     accent: EnterpriseTheme.warning
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var trendSection: some View {
+        if trendSnapshot.points.isEmpty {
+            EnterpriseCard {
+                EnterpriseSectionHeader(
+                    title: "Trend View",
+                    subtitle: "Your charts will appear once Seller Mode has inventory history to graph."
+                )
+            }
+        } else {
+            VStack(spacing: 12) {
+                SellerTrendChartCard(
+                    title: "Revenue Trend",
+                    subtitle: appViewModel.sellerAnalyticsWindow.displayLabel,
+                    icon: "chart.line.uptrend.xyaxis",
+                    tint: EnterpriseTheme.success,
+                    points: trendSnapshot.points,
+                    value: \.cumulativeRevenueValue,
+                    primaryValueText: { point in
+                        Formatters.currencyString(point.cumulativeRevenue)
+                    },
+                    secondaryValueText: { point in
+                        if point.soldRevenue == 0 {
+                            return "No sales recorded"
+                        }
+                        return "Daily sales \(Formatters.currencyString(point.soldRevenue))"
+                    },
+                    axisLabel: { value in
+                        Formatters.currencyString(Decimal(value))
+                    }
+                )
+
+                SellerTrendChartCard(
+                    title: trendSnapshot.hasProfitData ? "Profit Trend" : "Unit Flow",
+                    subtitle: trendSnapshot.hasProfitData
+                        ? "Drag across the line to inspect gains or losses by day."
+                        : "Track how many units entered versus left inventory each day.",
+                    icon: trendSnapshot.hasProfitData ? "dollarsign.arrow.circlepath" : "shippingbox.fill",
+                    tint: trendSnapshot.hasProfitData ? EnterpriseTheme.accent : EnterpriseTheme.warning,
+                    points: trendSnapshot.points,
+                    value: trendSnapshot.hasProfitData ? \.soldProfitValue : \.netUnitFlowValue,
+                    primaryValueText: { point in
+                        if trendSnapshot.hasProfitData {
+                            return Formatters.currencyString(point.soldProfit)
+                        }
+                        return point.netUnitFlow >= 0
+                            ? "+\(point.netUnitFlow) units"
+                            : "\(point.netUnitFlow) units"
+                    },
+                    secondaryValueText: { point in
+                        if trendSnapshot.hasProfitData {
+                            let soldLabel = point.soldUnits == 1 ? "1 sold unit" : "\(point.soldUnits) sold units"
+                            return point.soldUnits == 0 ? "No priced sales recorded" : soldLabel
+                        }
+                        return "\(point.addedUnits) added • \(point.soldUnits) sold"
+                    },
+                    axisLabel: { value in
+                        if trendSnapshot.hasProfitData {
+                            return Formatters.currencyString(Decimal(value))
+                        }
+                        return String(format: "%.0f", value)
+                    }
                 )
             }
         }
@@ -972,5 +1044,199 @@ private struct SellerDashboardHome: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(EnterpriseTheme.border, lineWidth: 1)
         }
+    }
+}
+
+private struct SellerTrendChartCard: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    let tint: Color
+    let points: [SellerTrendPoint]
+    let value: KeyPath<SellerTrendPoint, Double>
+    let primaryValueText: (SellerTrendPoint) -> String
+    let secondaryValueText: (SellerTrendPoint) -> String
+    let axisLabel: (Double) -> String
+
+    @State private var selectedPoint: SellerTrendPoint?
+
+    private static let selectedDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter
+    }()
+
+    private static let axisDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M/d"
+        return formatter
+    }()
+
+    private var displayedPoint: SellerTrendPoint? {
+        selectedPoint ?? points.last
+    }
+
+    private var hasNegativeValues: Bool {
+        points.contains { $0[keyPath: value] < 0 }
+    }
+
+    var body: some View {
+        EnterpriseCard {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Image(systemName: icon)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(tint)
+                        Text(title)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(EnterpriseTheme.textPrimary)
+                    }
+
+                    Text(subtitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(EnterpriseTheme.textSecondary)
+                }
+
+                Spacer()
+
+                if let displayedPoint {
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Text(primaryValueText(displayedPoint))
+                            .font(.system(size: 17, weight: .bold, design: .monospaced))
+                            .foregroundStyle(EnterpriseTheme.textPrimary)
+                            .contentTransition(.numericText())
+                        Text(dateLabel(for: displayedPoint.date))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(EnterpriseTheme.textTertiary)
+                        Text(secondaryValueText(displayedPoint))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(EnterpriseTheme.textSecondary)
+                    }
+                    .multilineTextAlignment(.trailing)
+                }
+            }
+
+            Chart {
+                if hasNegativeValues {
+                    RuleMark(y: .value("Break Even", 0))
+                        .foregroundStyle(EnterpriseTheme.borderStrong.opacity(0.9))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                }
+
+                ForEach(points) { point in
+                    AreaMark(
+                        x: .value("Date", point.date),
+                        y: .value("Value", point[keyPath: value])
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [tint.opacity(0.20), tint.opacity(0.02)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                    LineMark(
+                        x: .value("Date", point.date),
+                        y: .value("Value", point[keyPath: value])
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                    .foregroundStyle(tint)
+                }
+
+                if let selectedPoint {
+                    RuleMark(x: .value("Selected Day", selectedPoint.date))
+                        .foregroundStyle(EnterpriseTheme.textTertiary.opacity(0.45))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+
+                    PointMark(
+                        x: .value("Selected Day", selectedPoint.date),
+                        y: .value("Selected Value", selectedPoint[keyPath: value])
+                    )
+                    .symbolSize(58)
+                    .foregroundStyle(tint)
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 4)) { value in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.8, dash: [4, 4]))
+                        .foregroundStyle(EnterpriseTheme.border.opacity(0.8))
+                    AxisTick()
+                        .foregroundStyle(EnterpriseTheme.textTertiary)
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            Text(axisDateLabel(for: date))
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(EnterpriseTheme.textTertiary)
+                        }
+                    }
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.8, dash: [4, 4]))
+                        .foregroundStyle(EnterpriseTheme.border.opacity(0.75))
+                    AxisTick()
+                        .foregroundStyle(EnterpriseTheme.textTertiary)
+                    AxisValueLabel {
+                        if let amount = value.as(Double.self) {
+                            Text(axisLabel(amount))
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(EnterpriseTheme.textTertiary)
+                        }
+                    }
+                }
+            }
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    Rectangle()
+                        .fill(.clear)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { drag in
+                                    guard let plotFrame = proxy.plotFrame else { return }
+                                    let frame = geometry[plotFrame]
+                                    let xPosition = drag.location.x - frame.origin.x
+                                    guard xPosition >= 0, xPosition <= proxy.plotSize.width,
+                                          let date: Date = proxy.value(atX: xPosition) else {
+                                        return
+                                    }
+                                    selectedPoint = nearestPoint(to: date)
+                                }
+                                .onEnded { _ in
+                                    selectedPoint = nil
+                                }
+                        )
+                }
+            }
+            .frame(height: 220)
+
+            HStack(spacing: 8) {
+                Image(systemName: "hand.draw")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(EnterpriseTheme.textTertiary)
+                Text("Drag across the chart to inspect each day.")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(EnterpriseTheme.textTertiary)
+            }
+        }
+    }
+
+    private func nearestPoint(to date: Date) -> SellerTrendPoint? {
+        points.min {
+            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+        }
+    }
+
+    private func dateLabel(for date: Date) -> String {
+        Self.selectedDateFormatter.string(from: date)
+    }
+
+    private func axisDateLabel(for date: Date) -> String {
+        Self.axisDateFormatter.string(from: date)
     }
 }

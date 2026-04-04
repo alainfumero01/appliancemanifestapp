@@ -110,7 +110,7 @@ struct SettingsView: View {
 
             SettingsRow(
                 icon: "key",
-                iconColor: Color(red: 0.4, green: 0.6, blue: 1.0),
+                iconColor: EnterpriseTheme.accent,
                 title: isSendingPasswordReset ? "Sending…" : "Change Password",
                 showChevron: !isSendingPasswordReset,
                 action: {

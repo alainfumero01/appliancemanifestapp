@@ -497,6 +497,28 @@ struct SellerAnalytics {
     var topModels: [(String, Int)]
 }
 
+struct SellerTrendPoint: Identifiable, Equatable {
+    let date: Date
+    let addedUnits: Int
+    let soldUnits: Int
+    let soldRevenue: Decimal
+    let soldProfit: Decimal
+    let cumulativeRevenue: Decimal
+
+    var id: Date { date }
+    var netUnitFlow: Int { addedUnits - soldUnits }
+    var soldRevenueValue: Double { NSDecimalNumber(decimal: soldRevenue).doubleValue }
+    var soldProfitValue: Double { NSDecimalNumber(decimal: soldProfit).doubleValue }
+    var cumulativeRevenueValue: Double { NSDecimalNumber(decimal: cumulativeRevenue).doubleValue }
+    var soldUnitsValue: Double { Double(soldUnits) }
+    var netUnitFlowValue: Double { Double(netUnitFlow) }
+}
+
+struct SellerTrendSnapshot: Equatable {
+    let points: [SellerTrendPoint]
+    let hasProfitData: Bool
+}
+
 struct InventoryImportSummary: Equatable {
     let selectedLoadCount: Int
     let importedLoadCount: Int
@@ -648,6 +670,81 @@ extension Array where Element == InventoryUnit {
             topCategories: topCounts(for: soldUnits.map(\.displayCategory)),
             topModels: topCounts(for: soldUnits.map(\.modelNumber))
         )
+    }
+
+    func sellerTrendSnapshot(window: SellerAnalyticsWindow, now: Date = Date()) -> SellerTrendSnapshot {
+        let calendar = Calendar.current
+        let endDate = calendar.startOfDay(for: now)
+
+        let startDate: Date = {
+            if let dayCount = window.dayCount,
+               let threshold = calendar.date(byAdding: .day, value: -(dayCount - 1), to: endDate) {
+                return threshold
+            }
+
+            let eventDates = compactMap { unit -> Date? in
+                if unit.status == .sold {
+                    return unit.soldAt ?? unit.updatedAt
+                }
+                return unit.createdAt
+            }
+            let earliest = eventDates.min() ?? endDate
+            return calendar.startOfDay(for: earliest)
+        }()
+
+        guard startDate <= endDate else {
+            return SellerTrendSnapshot(points: [], hasProfitData: false)
+        }
+
+        var addedUnitsByDay: [Date: Int] = [:]
+        var soldUnitsByDay: [Date: Int] = [:]
+        var soldRevenueByDay: [Date: Decimal] = [:]
+        var soldProfitByDay: [Date: Decimal] = [:]
+        var hasProfitData = false
+
+        for unit in self {
+            let createdDay = calendar.startOfDay(for: unit.createdAt)
+            if createdDay >= startDate && createdDay <= endDate {
+                addedUnitsByDay[createdDay, default: 0] += 1
+            }
+
+            guard unit.status == .sold else { continue }
+            let soldEventDate = calendar.startOfDay(for: unit.soldAt ?? unit.updatedAt)
+            guard soldEventDate >= startDate && soldEventDate <= endDate else { continue }
+
+            soldUnitsByDay[soldEventDate, default: 0] += 1
+            soldRevenueByDay[soldEventDate, default: 0] += unit.soldPrice ?? 0
+
+            if let realizedProfit = unit.realizedProfit {
+                soldProfitByDay[soldEventDate, default: 0] += realizedProfit
+                hasProfitData = true
+            }
+        }
+
+        var points: [SellerTrendPoint] = []
+        var cursor = startDate
+        var cumulativeRevenue: Decimal = 0
+
+        while cursor <= endDate {
+            let dailyRevenue = soldRevenueByDay[cursor, default: 0]
+            cumulativeRevenue += dailyRevenue
+
+            points.append(
+                SellerTrendPoint(
+                    date: cursor,
+                    addedUnits: addedUnitsByDay[cursor, default: 0],
+                    soldUnits: soldUnitsByDay[cursor, default: 0],
+                    soldRevenue: dailyRevenue,
+                    soldProfit: soldProfitByDay[cursor, default: 0],
+                    cumulativeRevenue: cumulativeRevenue
+                )
+            )
+
+            guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+
+        return SellerTrendSnapshot(points: points, hasProfitData: hasProfitData)
     }
 }
 

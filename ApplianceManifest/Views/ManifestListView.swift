@@ -109,7 +109,7 @@ struct ManifestListView: View {
                 LoadScanIconView(size: 48)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .shadow(
-                        color: Color(red: 0.145, green: 0.337, blue: 0.859).opacity(0.22),
+                        color: EnterpriseTheme.brandShadow,
                         radius: 10, x: 0, y: 4
                     )
 
@@ -282,7 +282,7 @@ struct ManifestListView: View {
                             Label(manifest.status == .sold ? "Unmark Sold" : "Mark Sold",
                                   systemImage: manifest.status == .sold ? "arrow.uturn.backward" : "dollarsign.circle.fill")
                         }
-                        .tint(manifest.status == .sold ? EnterpriseTheme.textTertiary : Color(red: 0.4, green: 0.3, blue: 0.8))
+                        .tint(manifest.status == .sold ? EnterpriseTheme.textTertiary : EnterpriseTheme.accent)
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
@@ -765,21 +765,30 @@ private struct InventoryGroupCard: View {
                     Text(group.productName)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(EnterpriseTheme.textPrimary)
+                        .lineLimit(2)
                     Text("\(group.brand) · \(group.modelNumber)")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(EnterpriseTheme.textSecondary)
-                    HStack(spacing: 8) {
-                        StatusBadge(text: group.condition.displayLabel, tint: EnterpriseTheme.warning)
-                        StatusBadge(text: group.applianceCategory, tint: EnterpriseTheme.accent)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            StatusBadge(text: group.condition.displayLabel, tint: EnterpriseTheme.warning)
+                            StatusBadge(text: group.applianceCategory, tint: EnterpriseTheme.accent)
+                                .layoutPriority(1)
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            StatusBadge(text: group.condition.displayLabel, tint: EnterpriseTheme.warning)
+                            StatusBadge(text: group.applianceCategory, tint: EnterpriseTheme.accent)
+                        }
                     }
                     HStack(spacing: 16) {
                         inventoryCount(label: "Available", value: group.availableCount, tint: EnterpriseTheme.success)
-                        inventoryCount(label: "Reserved", value: group.reservedCount, tint: Color(red: 0.51, green: 0.33, blue: 0.86))
+                        inventoryCount(label: "Reserved", value: group.reservedCount, tint: EnterpriseTheme.reserved)
                         inventoryCount(label: "Sold", value: group.soldCount, tint: EnterpriseTheme.textTertiary)
                     }
                 }
-
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 VStack(alignment: .trailing, spacing: 8) {
                     Text(Formatters.currencyString(group.askingPrice))
@@ -829,10 +838,19 @@ private struct InventoryGroupDetailView: View {
                         subtitle: "\(group.brand) · \(group.modelNumber)"
                     )
 
-                    HStack(spacing: 12) {
-                        metric(label: "Available", value: "\(group.availableCount)", tint: EnterpriseTheme.success)
-                        metric(label: "Reserved", value: "\(group.reservedCount)", tint: Color(red: 0.51, green: 0.33, blue: 0.86))
-                        metric(label: "Sold", value: "\(group.soldCount)", tint: EnterpriseTheme.textSecondary)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            metric(label: "Available", value: "\(group.availableCount)", tint: EnterpriseTheme.success)
+                            metric(label: "Reserved", value: "\(group.reservedCount)", tint: EnterpriseTheme.reserved)
+                            metric(label: "Sold", value: "\(group.soldCount)", tint: EnterpriseTheme.textSecondary)
+                        }
+                        VStack(spacing: 10) {
+                            HStack(spacing: 12) {
+                                metric(label: "Available", value: "\(group.availableCount)", tint: EnterpriseTheme.success)
+                                metric(label: "Reserved", value: "\(group.reservedCount)", tint: EnterpriseTheme.reserved)
+                            }
+                            metric(label: "Sold", value: "\(group.soldCount)", tint: EnterpriseTheme.textSecondary)
+                        }
                     }
                 }
 
@@ -841,33 +859,18 @@ private struct InventoryGroupDetailView: View {
                         selectedUnit = unit
                     } label: {
                         EnterpriseCard(accentLeft: unit.status.tint) {
-                            HStack(alignment: .top) {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(unit.status.displayLabel)
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundStyle(unit.status.tint)
-                                    Text("Condition: \(unit.condition.displayLabel)")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(EnterpriseTheme.textSecondary)
-                                    if let costBasis = unit.costBasis {
-                                        Text("Cost Basis \(Formatters.currencyString(costBasis))")
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundStyle(EnterpriseTheme.textTertiary)
-                                    }
+                            ViewThatFits(in: .horizontal) {
+                                HStack(alignment: .top, spacing: 12) {
+                                    unitSummary(unit)
+                                    Spacer(minLength: 12)
+                                    unitPricing(unit)
                                 }
-                                Spacer()
-                                VStack(alignment: .trailing, spacing: 8) {
-                                    Text(Formatters.currencyString(unit.askingPrice))
-                                        .font(.system(size: 18, weight: .bold, design: .monospaced))
-                                        .foregroundStyle(EnterpriseTheme.textPrimary)
-                                    if let soldPrice = unit.soldPrice {
-                                        Text("Sold \(Formatters.currencyString(soldPrice))")
-                                            .font(.system(size: 11, weight: .medium))
-                                            .foregroundStyle(EnterpriseTheme.success)
+                                VStack(alignment: .leading, spacing: 12) {
+                                    unitSummary(unit)
+                                    HStack {
+                                        Spacer()
+                                        unitPricing(unit)
                                     }
-                                    Image(systemName: "slider.horizontal.3")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(EnterpriseTheme.textTertiary)
                                 }
                             }
                         }
@@ -903,6 +906,43 @@ private struct InventoryGroupDetailView: View {
         .padding(12)
         .background(EnterpriseTheme.backgroundSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func unitSummary(_ unit: InventoryUnit) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(unit.status.displayLabel)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(unit.status.tint)
+            Text("Condition: \(unit.condition.displayLabel)")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(EnterpriseTheme.textSecondary)
+            if let costBasis = unit.costBasis {
+                Text("Cost Basis \(Formatters.currencyString(costBasis))")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(EnterpriseTheme.textTertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func unitPricing(_ unit: InventoryUnit) -> some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            Text(Formatters.currencyString(unit.askingPrice))
+                .font(.system(size: 18, weight: .bold, design: .monospaced))
+                .foregroundStyle(EnterpriseTheme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            if let soldPrice = unit.soldPrice {
+                Text("Sold \(Formatters.currencyString(soldPrice))")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(EnterpriseTheme.success)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(EnterpriseTheme.textTertiary)
+        }
     }
 }
 
@@ -1089,24 +1129,17 @@ private struct QuickLoadBuilderView: View {
 
                     if selectedUnitCount > 0 {
                         EnterpriseCard(accentLeft: EnterpriseTheme.success) {
-                            HStack(alignment: .top, spacing: 14) {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("SELECTION")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(EnterpriseTheme.textSecondary)
-                                        .tracking(1.2)
-                                    Text("\(selectedUnitCount) units from \(selectedGroupCount) groups")
-                                        .font(.system(size: 18, weight: .bold))
-                                        .foregroundStyle(EnterpriseTheme.textPrimary)
-                                        .contentTransition(.numericText())
-                                    Text("Estimated asking value \(Formatters.currencyString(selectedAskingValue))")
-                                        .font(.subheadline.weight(.medium))
-                                        .foregroundStyle(EnterpriseTheme.textSecondary)
+                            ViewThatFits(in: .horizontal) {
+                                HStack(alignment: .top, spacing: 14) {
+                                    selectionSummary()
+                                    Spacer(minLength: 12)
+                                    StatusBadge(text: "Ready", tint: EnterpriseTheme.success)
                                 }
 
-                                Spacer()
-
-                                StatusBadge(text: "Ready", tint: EnterpriseTheme.success)
+                                VStack(alignment: .leading, spacing: 10) {
+                                    selectionSummary()
+                                    StatusBadge(text: "Ready", tint: EnterpriseTheme.success)
+                                }
                             }
                         }
                     }
@@ -1122,35 +1155,16 @@ private struct QuickLoadBuilderView: View {
                             let selectedCount = selectedCounts[group.id] ?? 0
 
                             EnterpriseCard(accentLeft: selectedCount > 0 ? EnterpriseTheme.success : EnterpriseTheme.accent) {
-                                HStack(alignment: .top, spacing: 12) {
-                                    VStack(alignment: .leading, spacing: 7) {
-                                        Text(group.productName)
-                                            .font(.system(size: 15, weight: .semibold))
-                                            .foregroundStyle(EnterpriseTheme.textPrimary)
-                                        Text("\(group.brand) · \(group.modelNumber)")
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundStyle(EnterpriseTheme.textSecondary)
-                                        HStack(spacing: 10) {
-                                            StatusBadge(text: group.condition.displayLabel, tint: EnterpriseTheme.warning)
-                                            Text("\(group.availableCount) ready")
-                                                .font(.system(size: 11, weight: .medium))
-                                                .foregroundStyle(EnterpriseTheme.textTertiary)
-                                            if selectedCount > 0 {
-                                                StatusBadge(text: "\(selectedCount) Added", tint: EnterpriseTheme.success)
-                                            }
-                                        }
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(alignment: .top, spacing: 14) {
+                                        quickLoadGroupSummary(group: group, selectedCount: selectedCount)
+                                        Spacer(minLength: 12)
+                                        quickLoadControls(group: group, selectedCount: selectedCount, alignment: .trailing)
                                     }
-                                    Spacer()
-                                    VStack(alignment: .trailing, spacing: 6) {
-                                        Text(Formatters.currencyString(group.askingPrice))
-                                            .font(.system(size: 18, weight: .bold, design: .monospaced))
-                                            .foregroundStyle(EnterpriseTheme.textPrimary)
-                                        QuickLoadCountControl(
-                                            count: selectedCount,
-                                            maxCount: group.availableCount
-                                        ) { delta in
-                                            updateSelection(for: group, delta: delta)
-                                        }
+
+                                    VStack(alignment: .leading, spacing: 14) {
+                                        quickLoadGroupSummary(group: group, selectedCount: selectedCount)
+                                        quickLoadControls(group: group, selectedCount: selectedCount, alignment: .leading)
                                     }
                                 }
                             }
@@ -1193,6 +1207,79 @@ private struct QuickLoadBuilderView: View {
             }
             .enterpriseScreen()
         }
+    }
+
+    @ViewBuilder
+    private func selectionSummary() -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("SELECTION")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(EnterpriseTheme.textSecondary)
+                .tracking(1.2)
+            Text("\(selectedUnitCount) units from \(selectedGroupCount) groups")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(EnterpriseTheme.textPrimary)
+                .contentTransition(.numericText())
+            Text("Estimated asking value \(Formatters.currencyString(selectedAskingValue))")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(EnterpriseTheme.textSecondary)
+        }
+    }
+
+    @ViewBuilder
+    private func quickLoadGroupSummary(group: InventoryGroupRow, selectedCount: Int) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(group.productName)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(EnterpriseTheme.textPrimary)
+                .lineLimit(2)
+
+            Text("\(group.brand) · \(group.modelNumber)")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(EnterpriseTheme.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    StatusBadge(text: group.condition.displayLabel, tint: EnterpriseTheme.warning)
+                    Text("\(group.availableCount) ready")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(EnterpriseTheme.textTertiary)
+                    if selectedCount > 0 {
+                        StatusBadge(text: "\(selectedCount) Added", tint: EnterpriseTheme.success)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    StatusBadge(text: group.condition.displayLabel, tint: EnterpriseTheme.warning)
+                    Text("\(group.availableCount) ready")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(EnterpriseTheme.textTertiary)
+                    if selectedCount > 0 {
+                        StatusBadge(text: "\(selectedCount) Added", tint: EnterpriseTheme.success)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func quickLoadControls(group: InventoryGroupRow, selectedCount: Int, alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: 8) {
+            Text(Formatters.currencyString(group.askingPrice))
+                .font(.system(size: 18, weight: .bold, design: .monospaced))
+                .foregroundStyle(EnterpriseTheme.textPrimary)
+
+            QuickLoadCountControl(
+                count: selectedCount,
+                maxCount: group.availableCount
+            ) { delta in
+                updateSelection(for: group, delta: delta)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
     }
 
     private func save() {
@@ -1318,16 +1405,30 @@ private struct LoadImportSheetView: View {
                             subtitle: "Select the loads you want to convert into unit inventory. Loads already imported are labeled clearly."
                         )
 
-                        HStack(spacing: 12) {
-                            Button("Select Eligible") {
-                                selectedManifestIDs = Set(candidates.filter { !$0.isFullyImported && $0.totalUnitCount > 0 }.map(\.id))
-                            }
-                            .buttonStyle(EnterpriseSecondaryButtonStyle())
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 12) {
+                                Button("Select Eligible") {
+                                    selectedManifestIDs = Set(candidates.filter { !$0.isFullyImported && $0.totalUnitCount > 0 }.map(\.id))
+                                }
+                                .buttonStyle(EnterpriseSecondaryButtonStyle())
 
-                            Button("Clear Selection") {
-                                selectedManifestIDs.removeAll()
+                                Button("Clear Selection") {
+                                    selectedManifestIDs.removeAll()
+                                }
+                                .buttonStyle(EnterpriseSecondaryButtonStyle())
                             }
-                            .buttonStyle(EnterpriseSecondaryButtonStyle())
+
+                            VStack(alignment: .leading, spacing: 10) {
+                                Button("Select Eligible") {
+                                    selectedManifestIDs = Set(candidates.filter { !$0.isFullyImported && $0.totalUnitCount > 0 }.map(\.id))
+                                }
+                                .buttonStyle(EnterpriseSecondaryButtonStyle())
+
+                                Button("Clear Selection") {
+                                    selectedManifestIDs.removeAll()
+                                }
+                                .buttonStyle(EnterpriseSecondaryButtonStyle())
+                            }
                         }
                     }
 
@@ -1343,36 +1444,24 @@ private struct LoadImportSheetView: View {
                                 toggleSelection(for: candidate)
                             } label: {
                                 EnterpriseCard(accentLeft: selectedManifestIDs.contains(candidate.id) ? EnterpriseTheme.success : EnterpriseTheme.accent) {
-                                    HStack(alignment: .top, spacing: 12) {
-                                        VStack(alignment: .leading, spacing: 8) {
-                                            Text(candidate.manifest.title)
-                                                .font(.system(size: 16, weight: .semibold))
-                                                .foregroundStyle(EnterpriseTheme.textPrimary)
-                                            Text(Formatters.mediumDate.string(from: candidate.manifest.createdAt))
-                                                .font(.system(size: 12, weight: .medium))
-                                                .foregroundStyle(EnterpriseTheme.textSecondary)
-
-                                            HStack(spacing: 8) {
-                                                StatusBadge(text: candidate.manifest.status.rawValue.capitalized, tint: candidate.manifest.status == .sold ? EnterpriseTheme.success : EnterpriseTheme.accent)
-                                                if candidate.isFullyImported {
-                                                    StatusBadge(text: "Imported", tint: EnterpriseTheme.success)
-                                                } else if candidate.hasPartialImport {
-                                                    StatusBadge(text: "Partial", tint: EnterpriseTheme.warning)
-                                                } else {
-                                                    StatusBadge(text: "Ready", tint: EnterpriseTheme.accent)
-                                                }
-                                            }
-
-                                            Text("\(candidate.totalUnitCount) unit\(candidate.totalUnitCount == 1 ? "" : "s") · \(candidate.importedUnitCount) already in inventory")
-                                                .font(.system(size: 12, weight: .medium))
-                                                .foregroundStyle(EnterpriseTheme.textTertiary)
+                                    ViewThatFits(in: .horizontal) {
+                                        HStack(alignment: .top, spacing: 12) {
+                                            loadImportSummary(candidate)
+                                            Spacer(minLength: 12)
+                                            Image(systemName: selectedManifestIDs.contains(candidate.id) ? "checkmark.circle.fill" : "circle")
+                                                .font(.system(size: 22, weight: .semibold))
+                                                .foregroundStyle(selectedManifestIDs.contains(candidate.id) ? EnterpriseTheme.success : EnterpriseTheme.textTertiary)
                                         }
 
-                                        Spacer()
-
-                                        Image(systemName: selectedManifestIDs.contains(candidate.id) ? "checkmark.circle.fill" : "circle")
-                                            .font(.system(size: 22, weight: .semibold))
-                                            .foregroundStyle(selectedManifestIDs.contains(candidate.id) ? EnterpriseTheme.success : EnterpriseTheme.textTertiary)
+                                        VStack(alignment: .leading, spacing: 12) {
+                                            loadImportSummary(candidate)
+                                            HStack {
+                                                Spacer()
+                                                Image(systemName: selectedManifestIDs.contains(candidate.id) ? "checkmark.circle.fill" : "circle")
+                                                    .font(.system(size: 22, weight: .semibold))
+                                                    .foregroundStyle(selectedManifestIDs.contains(candidate.id) ? EnterpriseTheme.success : EnterpriseTheme.textTertiary)
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1437,6 +1526,49 @@ private struct LoadImportSheetView: View {
         } else {
             selectedManifestIDs.insert(candidate.id)
         }
+    }
+
+    @ViewBuilder
+    private func loadImportSummary(_ candidate: LoadImportCandidate) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(candidate.manifest.title)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(EnterpriseTheme.textPrimary)
+                .lineLimit(2)
+
+            Text(Formatters.mediumDate.string(from: candidate.manifest.createdAt))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(EnterpriseTheme.textSecondary)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    StatusBadge(text: candidate.manifest.status.rawValue.capitalized, tint: candidate.manifest.status == .sold ? EnterpriseTheme.success : EnterpriseTheme.accent)
+                    if candidate.isFullyImported {
+                        StatusBadge(text: "Imported", tint: EnterpriseTheme.success)
+                    } else if candidate.hasPartialImport {
+                        StatusBadge(text: "Partial", tint: EnterpriseTheme.warning)
+                    } else {
+                        StatusBadge(text: "Ready", tint: EnterpriseTheme.accent)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    StatusBadge(text: candidate.manifest.status.rawValue.capitalized, tint: candidate.manifest.status == .sold ? EnterpriseTheme.success : EnterpriseTheme.accent)
+                    if candidate.isFullyImported {
+                        StatusBadge(text: "Imported", tint: EnterpriseTheme.success)
+                    } else if candidate.hasPartialImport {
+                        StatusBadge(text: "Partial", tint: EnterpriseTheme.warning)
+                    } else {
+                        StatusBadge(text: "Ready", tint: EnterpriseTheme.accent)
+                    }
+                }
+            }
+
+            Text("\(candidate.totalUnitCount) unit\(candidate.totalUnitCount == 1 ? "" : "s") · \(candidate.importedUnitCount) already in inventory")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(EnterpriseTheme.textTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func importSelection() {
@@ -2068,7 +2200,7 @@ private extension InventoryStatus {
         switch self {
         case .inStock: return EnterpriseTheme.success
         case .listed: return EnterpriseTheme.warning
-        case .reserved: return Color(red: 0.51, green: 0.33, blue: 0.86)
+        case .reserved: return EnterpriseTheme.reserved
         case .sold: return EnterpriseTheme.textSecondary
         }
     }

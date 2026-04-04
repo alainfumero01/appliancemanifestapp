@@ -45,10 +45,10 @@ func renderIcon(pixels: Int) -> Data? {
     let ctx = gc.cgContext
 
     // ── Background gradient ─────────────────────────────────────────
-    // Indigo blue: #2556DB (top) → #1540B0 (bottom)
+    // Soft graphite: #5C6470 (top) → #191D24 (bottom)
     let cs = CGColorSpaceCreateDeviceRGB()
-    let top    = CGColor(red: 0.145, green: 0.337, blue: 0.859, alpha: 1) // #2556DB
-    let bottom = CGColor(red: 0.082, green: 0.251, blue: 0.690, alpha: 1) // #1540B0
+    let top    = CGColor(red: 0.361, green: 0.392, blue: 0.439, alpha: 1) // #5C6470
+    let bottom = CGColor(red: 0.098, green: 0.114, blue: 0.141, alpha: 1) // #191D24
     let gradient = CGGradient(colorsSpace: cs,
                                colors: [top, bottom] as CFArray,
                                locations: [0, 1])!
